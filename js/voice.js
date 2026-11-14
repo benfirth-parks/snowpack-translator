@@ -94,7 +94,10 @@
     const acts = P.parse(text); if (!acts.length) { box.innerHTML = ""; return; }
     const out = M.apply(JSON.parse(JSON.stringify(m)), acts.filter(a => a.type !== "undo"));
     const lines = resLines(out); if (acts.some(a => a.type === "undo")) lines.unshift({ k: "ok", say: "Undo the last thing added" });
-    box.innerHTML = `<div class="heard-title">Heard, not added yet</div>` + linesHtml(lines); $("last").hidden = true;
+    // what needs a look comes first: not understood, then read with a caution
+    const rank = { bad: 0, warn: 1, ok: 2 }, sorted = lines.map((l, i) => [l, i]).sort((x, y) => rank[x[0].k] - rank[y[0].k] || x[1] - y[1]).map(x => x[0]);
+    const nb = lines.filter(l => l.k === "bad").length, nw = lines.filter(l => l.k === "warn").length;
+    box.innerHTML = `<div class="heard-title">Heard, not added yet${nb ? ` · ${nb} not understood` : ""}${nw ? ` · ${nw} to check` : ""}</div>` + linesHtml(sorted); box.scrollTop = 0; $("last").hidden = true;
   }
   function setSay(v) { $("say").value = v; preview(); }
   function showLast(e) {
@@ -102,53 +105,106 @@
     $("last").innerHTML = linesHtml([{ k, say: lead.say + (more > 0 ? `  (+${more} more)` : ""), hint: bad.length ? lead.hint : "" }]) + `<button type="button" class="ghost" id="lastAll">All heard</button>`;
     $("last").hidden = false;
   }
-  function add(text) {
-    text = String(text || "").trim(); if (!text) { $("say").focus(); return false; }
-    const acts = P.parse(text);
-    if (acts.length && acts.every(a => a.type === "undo")) { setSay(""); doUndo(); return true; }
+  // Adds what was said to the observation. From the microphone (mic), a statement still waiting for its value
+  // ("snow depth", "temperature 90") is held back in the box for the next words, and nothing pops up over the speaker.
+  // Returns false when nothing was added, else true (or, from the microphone, the words held back).
+  function add(text, mic) {
+    text = String(text || "").trim(); if (!text) { if (!mic) $("say").focus(); return false; }
+    let acts = P.parse(text), tail = "";
+    if (mic && acts.tail) {
+      tail = acts.tail; acts = acts.slice(0, acts.length - acts.tailCount);
+      if (!acts.length) { preview(); return false; }
+      if (text.toLowerCase().endsWith(tail.toLowerCase())) text = text.slice(0, text.length - tail.length).trim() || text;
+    }
+    if (acts.length && acts.every(a => a.type === "undo")) { setSay(tail); doUndo(); return tail || true; }
     const real = acts.filter(a => a.type !== "undo");
-    if (!M.apply(JSON.parse(JSON.stringify(m)), real).some(r => r.ok)) { preview(); toast("Not understood, so nothing was added. Fix the words, or tap “What can I say?”"); return false; }
+    if (!M.apply(JSON.parse(JSON.stringify(m)), real).some(r => r.ok)) { preview(); if (!mic) toast("Not understood, so nothing was added. Fix the words, or tap “What can I say?”"); return false; }
     snap();
     const out = M.apply(m, real), e = { text, res: resLines(out) };
     log.unshift(e); if (log.length > 200) log.length = 200;
     if (m.site.observer) cfg.observer = m.site.observer; if (m.site.org) cfg.org = m.site.org; cfg.elevUnit = m.site.elevUnit;
     satManual = null; if (real.some(a => a.type === "layer")) sel = m.layers.findIndex(l => l.id === m.cur);
-    setSay(""); renderAll(); showLast(e); persist();
-    return true;
+    setSay(tail); renderAll(); showLast(e); persist();
+    return tail || true;
   }
-  $("addBtn").onclick = () => add($("say").value);
-  $("say").addEventListener("input", preview);
+  function addTyped() { const ok = add($("say").value); if (listening) hear.reset(ok ? "" : $("say").value); }
+  $("addBtn").onclick = addTyped;
+  $("say").addEventListener("input", () => { preview(); if (listening) hear.reset($("say").value); }); // typing while it listens: the box is the truth
   $("say").setAttribute("enterkeyhint", "done");
-  $("say").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); add($("say").value); } });
+  $("say").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); addTyped(); } });
   $("last").addEventListener("click", e => { if (e.target.id === "lastAll") { renderLog(); openSheet("logSheet"); } });
 
   // Live listening where the browser has it. An iPhone home-screen app has none: there the keyboard microphone is the way,
   // and it is the one that works with no signal.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const ANDROID = /android/i.test(navigator.userAgent);
   const KB = "Tap the microphone on the keyboard and talk. It works with no signal.";
-  let rec = null, listening = false, heardBase = "";
+  const PAUSE = 800; // ms of quiet after a sentence before it is added
+  let rec = null, listening = false, bias = true;
+  // What the microphone has handed over and is not added yet. Phones repeat themselves: Android marks half-heard words
+  // as final, and some browsers hand over a growing copy of the same sentence. "chain" is the sentence being heard,
+  // "top" the recogniser's first choice for it, and "used" how many of its words are already added.
+  const hear = {
+    base: "", chain: "", top: "", used: 0, timer: null,
+    words: s => String(s).trim().split(/\s+/).filter(Boolean),
+    pending() { const rest = this.words(this.chain).slice(this.used).join(" "); return this.base + (rest ? rest + " " : ""); },
+    reset(keep) { clearTimeout(this.timer); this.timer = null; this.base = keep ? keep.replace(/\s*$/, " ") : ""; this.chain = ""; this.top = ""; this.used = 0; },
+    final(result) {
+      const top = result[0].transcript.trim().toLowerCase(); if (!top) return;
+      if (this.top && top === this.top) return; // the same sentence handed over twice
+      const list = []; for (let k = 0; k < result.length; k++) { const t = result[k].transcript.trim(); if (t) list.push(t); }
+      const text = list[list.length > 1 ? P.best(list) : 0]; // of the versions offered, the one that reads best
+      if (this.top && top.indexOf(this.top + " ") === 0) { this.chain = text; this.top = top; return; } // a longer copy: only its new words are new
+      this.base = this.pending(); this.chain = text; this.top = top; this.used = 0;
+    },
+    commit() { // add what is waiting; words not understood yet stay in the box and join what comes next
+      clearTimeout(this.timer); this.timer = null;
+      const text = this.pending().trim(); if (!text) return;
+      const kept = add(text, true); if (kept === false) return;
+      this.base = typeof kept === "string" ? kept + " " : ""; this.used = this.words(this.chain).length;
+    },
+    soon() { clearTimeout(this.timer); this.timer = null; if (cfg.auto !== false && this.pending().trim()) this.timer = setTimeout(() => this.commit(), PAUSE); }
+  };
   function micState() { const b = $("micBtn"); b.setAttribute("aria-pressed", String(listening)); b.setAttribute("aria-label", !SR ? "Dictate with the keyboard microphone" : listening ? "Stop listening" : "Listen"); }
-  function stopListening(msg) { listening = false; if (rec) { try { rec.stop(); } catch (e) { /* already stopped */ } } micState(); if (msg) toast(msg); }
+  function stopListening(msg) {
+    const was = listening; listening = false;
+    if (rec) { try { rec.stop(); } catch (e) { /* already stopped */ } }
+    if (was && cfg.auto !== false) hear.commit(); else { clearTimeout(hear.timer); hear.timer = null; }
+    micState(); if (msg) toast(msg);
+  }
   function startListening() {
     try {
       rec = new SR(); rec.lang = /^en/i.test(navigator.language || "") ? navigator.language : "en-CA"; rec.continuous = true; rec.interimResults = true;
-      if ("processLocally" in rec && !navigator.onLine) rec.processLocally = true;
-      heardBase = $("say").value ? $("say").value.replace(/\s*$/, " ") : "";
+      try { rec.maxAlternatives = 4; } catch (e) { /* one version is fine */ }
+      if ("processLocally" in rec && !navigator.onLine) {
+        rec.processLocally = true;
+        // recognition on the phone itself can be told which snow words to expect
+        if (bias && window.SpeechRecognitionPhrase && "phrases" in rec) { try { rec.phrases = P.terms().slice(0, 250).map(t => new window.SpeechRecognitionPhrase(t, 4)); } catch (e) { bias = false; } }
+      }
+      hear.reset($("say").value);
       rec.onresult = e => {
-        let interim = "";
+        let interim = "", lastInterim = "";
         for (let i = e.resultIndex; i < e.results.length; i++) {
-          const r = e.results[i], t = r[0].transcript.trim();
-          if (r.isFinal) { heardBase += t + " "; if (cfg.auto !== false && add(heardBase)) heardBase = ""; }
-          else interim += t + " ";
+          const r = e.results[i], t = r[0].transcript.trim(); if (!t) continue;
+          if (r.isFinal && (!ANDROID || r[0].confidence > 0)) hear.final(r); // Android marks half-heard words final, with a confidence of 0
+          else { interim += t + " "; lastInterim = t + " "; }
         }
-        setSay((heardBase + interim).trim());
+        if (ANDROID) interim = lastInterim; // there each one repeats the ones before it
+        setSay((hear.pending() + interim).trim());
+        if (interim) { clearTimeout(hear.timer); hear.timer = null; } else hear.soon();
       };
       rec.onerror = e => {
         if (e.error === "no-speech" || e.error === "aborted") return;
+        if (e.error === "phrases-not-supported") { bias = false; try { rec.phrases = []; } catch (x) { /* a fresh recogniser next time */ } return; }
         stopListening(e.error === "network" ? "Live listening needs a connection on this device. " + KB
           : e.error === "not-allowed" || e.error === "service-not-allowed" ? "The microphone is blocked for this page. " + KB : "Listening stopped. " + KB);
       };
-      rec.onend = () => { if (listening) { try { rec.start(); } catch (e) { stopListening(); } } };
+      rec.onend = () => {
+        if (!listening) return;
+        if (cfg.auto !== false) hear.commit();
+        hear.base = hear.pending(); hear.chain = ""; hear.top = ""; hear.used = 0; // the next session starts a new sentence
+        try { rec.start(); } catch (e) { stopListening(); }
+      };
       rec.start(); listening = true; micState();
     } catch (e) { stopListening("Live listening isn't available here. " + KB); }
   }
@@ -347,18 +403,20 @@
   $("addLayerBtn2").onclick = () => $("addLayerBtn").click(); $("addTempBtn2").onclick = () => $("addTempBtn").click();
 
   /* ---------- test result sheet ---------- */
-  const TESTS = { ECT: "Extended column test", CT: "Compression test", PST: "Propagation saw test", RB: "Rutschblock", DT: "Deep tap test" };
+  const TESTS = { ECT: "Extended column test", CT: "Compression test", PST: "Propagation saw test", RB: "Rutschblock", DT: "Deep tap test", ST: "Shovel shear test" };
   const RESULTS = {
     ECT: [["PV", "ECTPV", "Fracture propagates across the entire column during isolation."], ["P", "ECTP", "Fracture propagates across the entire column on this tap or the next."],
       ["N", "ECTN", "Fracture initiates on this tap but does not cross the entire column."], ["X", "ECTX", "No fracture occurs during the test."]],
     CT: [["f", "Fracture", "Taps: 1 to 10 easy (from the wrist), 11 to 20 moderate (from the elbow), 21 to 30 hard (from the shoulder)."], ["n", "CTN", "No fracture after 30 taps."]],
     DT: [["f", "Fracture", "Taps on a column cut down to 15 cm above the weak layer: 1 to 10 easy, 11 to 20 moderate, 21 to 30 hard."], ["n", "DTN", "No fracture after 30 taps."]],
+    ST: [["C", "STC", "Collapse: the block settles when it is cut."], ["V", "STV", "Very easy: fails while cutting or putting in the shovel."], ["E", "STE", "Easy: fails with minimum pressure."],
+      ["M", "STM", "Moderate: fails with moderate pressure."], ["H", "STH", "Hard: fails with firm, sustained pressure."], ["N", "STN", "No shear failure."]],
     PST: [["End", "End", "The fracture ran to the end of the column."], ["Arr", "Arr", "The fracture stopped itself before the end of the column."], ["SF", "SF", "The slab fractured above the saw cut."]],
     RB: [1, 2, 3, 4, 5, 6, 7].map(n => [String(n), "RB" + n, ["Released while isolating the block.", "Released as the skier stepped onto the block.", "Released on a knee drop, without jumping.", "Released on the first jump.", "Released on the second or third jump.", "Released on a jump without skis.", "No release."][n - 1]])
   };
   const CHARS = [["SP", "Sudden planar"], ["SC", "Sudden collapse"], ["RP", "Resistant planar"], ["PC", "Progressive compression"], ["BRK", "Non-planar break"]];
   let TS = null;
-  const tsFractured = () => TS.test === "ECT" ? TS.res === "P" || TS.res === "N" || TS.res === "PV" : TS.test === "RB" ? !!TS.res && TS.res !== "7" : TS.test === "PST" ? true : TS.res === "f";
+  const tsFractured = () => TS.test === "ECT" ? TS.res === "P" || TS.res === "N" || TS.res === "PV" : TS.test === "RB" ? !!TS.res && TS.res !== "7" : TS.test === "PST" ? true : TS.test === "ST" ? !!TS.res && TS.res !== "N" : TS.res === "f";
   function renderTest() {
     const t = TS.test, res = RESULTS[t], cur = res.find(r => r[0] === TS.res), taps = (t === "ECT" && (TS.res === "P" || TS.res === "N")) || ((t === "CT" || t === "DT") && TS.res === "f");
     $("tsType").innerHTML = Object.keys(TESTS).map(k => `<button type="button" class="pick" data-t="${k}" aria-pressed="${k === t}" title="${TESTS[k]}">${k}</button>`).join("");
@@ -371,7 +429,7 @@
     $("tsCharSec").hidden = !showChar && !rb; $("tsCharSec").querySelector(".lbl").textContent = rb ? "Release type" : "Fracture character";
     $("tsChar").innerHTML = rb ? [["WB", "Whole block"], ["MB", "Most of block"], ["EB", "Edge of block"]].map(c => `<button type="button" class="pick" data-c="${c[0]}" aria-pressed="${TS.rel === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("")
       : CHARS.map(c => `<button type="button" class="pick" data-c="${c[0]}" aria-pressed="${TS.char === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("");
-    $("tsQ").hidden = rb; $("tsQ").innerHTML = ["Q1", "Q2", "Q3"].map(q => `<button type="button" class="pick" data-q="${q}" aria-pressed="${TS.q === q}">${q}</button>`).join("");
+    $("tsQ").hidden = rb || t === "ST"; $("tsQ").innerHTML = ["Q1", "Q2", "Q3"].map(q => `<button type="button" class="pick" data-q="${q}" aria-pressed="${TS.q === q}">${q}</button>`).join("");
     $("tsDepthLbl").textContent = isHeight() ? "Height from the ground" : "Depth from the surface";
   }
   function keepNums() { ["taps", "cut", "col"].forEach(k => { const el = $("ts" + k[0].toUpperCase() + k.slice(1)); if (el) TS[k] = el.value; }); }
@@ -397,6 +455,7 @@
     if (t === "ECT") { a.prop = TS.res; if (TS.res === "P" || TS.res === "N") { if (taps == null || taps < 1 || taps > 30) return need("Enter the number of taps, 1 to 30.", "tsTaps"); a.score = taps; } }
     else if (t === "CT" || t === "DT") { if (TS.res === "n") a.none = true; else { if (taps == null || taps < 1 || taps > 30) return need("Enter the number of taps, 1 to 30.", "tsTaps"); a.score = taps; if (TS.char) a.char = TS.char; if (TS.q) a.q = TS.q; } }
     else if (t === "RB") { a.score = +TS.res; if (TS.rel && tsFractured()) a.rel = TS.rel; }
+    else if (t === "ST") { if (TS.res === "N") a.none = true; else a.band = TS.res; }
     else {
       const cut = M.num(TS.cut), col = M.num(TS.col);
       if (cut == null || cut <= 0) return need("Enter the cut length.", "tsCut");
@@ -573,6 +632,16 @@
       : `<p class="hint">Nothing yet. What you say or type, and how it was read, is listed here.</p>`;
   }
   $("logBtn").onclick = () => { renderLog(); openSheet("logSheet"); };
+  $("logCopy").onclick = () => { // what was said and how it was read, to paste into a message when something was misread
+    if (!log.length) { toast("Nothing heard yet."); return; }
+    const mark = { ok: "✓", warn: "!", bad: "?" }, text = log.map(e => `“${e.text}”\n` + e.res.map(r => `  ${mark[r.k]} ${r.say}`).join("\n")).join("\n\n");
+    const fallback = () => {
+      const ta = document.createElement("textarea"); ta.value = text; $("logSheet").appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand("copy"); } catch (e) { /* no clipboard here */ }
+      ta.remove(); toast(ok ? "Copied." : "Copying isn't allowed here.");
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast("Copied what was heard and how it was read."), fallback); else fallback();
+  };
   const EXAMPLE = {
     height: "Location Bow Summit study plot, aspect north east, elevation 2080 metres, slope 28, snow depth 100.\nLayer 100 to 65 fist plus rounds point three. Layer 65 to 30 four finger plus rounds point five. Layer 30 to 0 fist facets with depth hoar 1.5 max 2 weak layer.\nTemperature 90 minus 3.6, 70 minus 3.2, 50 minus 2.7, 30 minus 1.8, 10 minus 0.9.\nCompression test 21 sudden planar at 30.\nSky broken, precip none, wind light south west, air temperature minus 7.8.",
     depth: "Location Bow Summit study plot, aspect north east, elevation 2080 metres, slope 28, snow depth 100.\nLayer 0 to 35 fist plus rounds point three. Layer 35 to 70 four finger plus rounds point five. Layer 70 to 100 fist facets with depth hoar 1.5 max 2 weak layer.\nTemperature 10 minus 3.6, 30 minus 3.2, 50 minus 2.7, 70 minus 1.8, 90 minus 0.9.\nCompression test 21 sudden planar down 70.\nSky broken, precip none, wind light south west, air temperature minus 7.8."
@@ -584,7 +653,7 @@
       : "layer 0 to 35 fist plus rounds 0.3<br>to 70 four finger rounds point five<br>next 30 thick fist facets 1.5 max 2 weak layer<br>layer 93 to 95 fist surface hoar 6 label Jan 3rd";
     $("hpTemps").innerHTML = H ? "temperature 150 minus 6, 140 minus 5.2<br>surface temperature minus 9" : "temperature 10 minus 3.6, 20 minus 3.5<br>surface temperature minus 9";
     const at = H ? "at 60" : "down 95";
-    $("hpTests").innerHTML = `compression test 21 sudden planar ${at}<br>CT 12 Q2 ${at} · compression test no result<br>ECTP 22 ${at} · ECTN 15 ${at} · ECTX<br>PST 45 of 100 end ${at}<br>rutschblock 4 whole block ${at}<br>deep tap 18 sudden collapse ${at}`;
+    $("hpTests").innerHTML = `compression test 21 sudden planar ${at}<br>CT 12 Q2 ${at} · compression test no result<br>ECTP 22 ${at} · ECTN 15 ${at} · ECTX<br>PST 45 of 100 end ${at}<br>rutschblock 4 whole block ${at}<br>deep tap 18 sudden collapse ${at} · shovel shear test easy ${at}<br>“down 30” or “depth 30” is always cm below the surface, “up 70” cm above the ground`;
     $("say").placeholder = view === "sat" ? "Say “sky broken”" : H ? "Say “layer 100 to 83 fist”" : "Say “layer 0 to 35 fist”";
   }
   $("helpBtn").onclick = () => openSheet("helpSheet");

@@ -137,7 +137,7 @@ def test_yellow_flag_thresholds():
 
 def test_heights_from_the_ground():
     r = _run("""const { m } = build("height", ["layer 150 to 141 fist new snow 2", "layer 141 to 115 four finger decomposing",
-      "to 100 one finger rounds", "snow depth 155", "CT12 down 141", "temperature 150 minus 6"]);
+      "to 100 one finger rounds", "snow depth 155", "CT12 at 141", "temperature 150 minus 6"]);
       console.log(JSON.stringify({ L: m.layers.map(l => [l.top, l.bottom, M.toRef(m, l.top)]), hs: m.surf.hs, test: m.tests[0].depth, temp: m.temps[0].depth,
         text: M.satText(m) }));""")
     assert r["L"] == [[5, 14, 150], [14, 40, 141], [40, 55, 115]] and r["hs"] == 155  # heights kept when HS is corrected
@@ -251,3 +251,136 @@ def test_on_screen_graph_has_page_coloured_day_and_night_palettes():
       console.log(JSON.stringify({{ day: bg("day"), night: bg("night"), paper: bg("light"),
         keys: ["day", "night"].map(t => Object.keys(D.THEMES[t]).sort().join() === Object.keys(D.THEMES.light).sort().join()) }}));""")
     assert r["day"] == "#fbfdfe" and r["night"] == "#141f27" and r["paper"] == "#ffffff" and r["keys"] == [True, True]
+
+
+# ---- reading dictation with the OGRS vocabulary ----
+
+def _read(mode: str, hs, lines: list[str]) -> str:
+    """Everything the page reads back for these spoken pieces: "✓" understood, "~" understood with a caution, "✗" not."""
+    return _run(f"""const m = M.blank(); m.ref = {json.dumps(mode)}; m.site.date = "2026-11-14T10:00"; if ({json.dumps(hs)} != null) M.setHS(m, {json.dumps(hs)});
+      const out = []; {json.dumps(lines)}.forEach(t => M.apply(m, P.parse(t)).forEach(r => out.push((r.ok ? (r.warn ? "~ " : "✓ ") : "✗ ") + r.say)));
+      console.log(JSON.stringify(out.join("\\n")));""")
+
+
+@pytest.mark.parametrize("said, read", [
+    # every IACS grain class by name, by code and by spelled code
+    ("layer 100 to 83 4F+ FCxr 1.5", "✓ Layer 100–83 cm: 4F+, rounding facets, 1.5 mm"),
+    ("layer 100 to 83 fist D H C P 4", "✓ Layer 100–83 cm: F, hollow cups, 4.0 mm"),
+    ("layer 100 to 83 P K rounds", "✓ Layer 100–83 cm: P to K, rounded grains"),
+    ("layer 100 to 83 one F plus R G 1", "✓ Layer 100–83 cm: 1F+, rounded grains, 1.0 mm"),
+    ("layer 100 to 83 fist+ near surface facets 1", "✓ Layer 100–83 cm: F+, near-surface facets, 1.0 mm"),
+    ("layer 100 to 83 knife basal ice", "✓ Layer 100–83 cm: K, basal ice"),
+    # tests, with the shovel shear test and the result codes
+    ("C T M 15 resistant planar at 30", "✓ CT15RP at 30 cm"),
+    ("ECT P22 at 30", "✓ ECTP22 at 30 cm"),
+    ("compression test hard 25 progressive compression at 30", "✓ CT25PC at 30 cm"),
+    ("shovel shear test easy at 30", "✓ STE at 30 cm"),
+    ("compression test no result", "✓ CTN"),
+    # weather: OGRS codes, a linking word, the value said first, or no lead word at all
+    ("sky B K N", "✓ Sky: BKN (broken)"),
+    ("the sky is overcast", "✓ Sky: OVC (overcast)"),
+    ("broken sky", "✓ Sky: BKN (broken)"),
+    ("overcast", "✓ Sky: OVC (overcast)"),
+    ("no precipitation", "✓ Precipitation: NIL (no precipitation)"),
+    ("precipitation freezing rain", "✓ Precipitation: ZR (freezing rain)"),
+    ("precipitation graupel", "✓ Precipitation: G (graupel or hail)"),
+    ("snowing 2 cm an hour", "✓ Precipitation: S2 (snow, moderate (2 cm/h))"),
+    ("light rain", "✓ Precipitation: RL (rain, light)"),
+    ("wind L SW", "✓ Wind: L (light)\n✓ Wind from: SW"),
+    ("light winds from the southwest", "✓ Wind: L (light)\n✓ Wind from: SW"),
+    ("North East aspect", "✓ Aspect: NE"),
+    ("maximum minus 2 minimum minus 11", "✓ Max temperature: -2 °C\n✓ Min temperature: -11 °C"),
+    ("new snow 12 cm", "✓ New snow, 24 h (HN24): 12 cm"),
+    ("temperature minus 12", "✓ Air temperature: -12 °C"),
+    ("surface temperature minus 8", "✓ Surface temperature -8 °C"),
+])
+def test_ogrs_terms_and_codes(said, read):
+    assert _read("height", 100, [said]) == read
+
+
+@pytest.mark.parametrize("said, read", [
+    # a known mishearing is read as the term, and the read-back says so
+    ("Later 100 to 83 fist rounds", "✓ Layer 100–83 cm: F, rounded grains (heard “Later” as layer)"),
+    ("layer 100 to 83, first, rounds, .5 mm", "✓ Layer 100–83 cm: F, rounded grains, 0.5 mm (heard “first” as fist)"),
+    ("layer 100 to 83 fist surface her 5 mm", "✓ Layer 100–83 cm: F, surface hoar, 5.0 mm (heard “surface her” as surface hoar)"),
+    ("layer 100 to 83 fist death or 3", "✓ Layer 100–83 cm: F, depth hoar, 3.0 mm (heard “death or” as depth hoar)"),
+    ("layer 100 to 83 night crust", "✓ Layer 100–83 cm: K, melt-freeze crust (heard “night” as knife)"),
+    ("easy TP 22 at 30", "✓ ECTP22 at 30 cm (heard “easy TP” as ect p)"),
+    ("rush block 4 hole block at 30", "✓ RB4(WB) at 30 cm (heard “rush block” as rutschblock, “hole block” as whole block)"),
+    ("precip Neil", "✓ Precipitation: NIL (no precipitation) (heard “Neil” as nil)"),
+    ("wind com", "✓ Wind: C (calm) (heard “com” as calm)"),
+    ("ski pin 15", "✓ Ski penetration: 15 cm (heard “ski pin” as ski penetration)"),
+    ("Snow death 150", "✓ Snow depth (HS): 150 cm (heard “Snow death” as snow depth)"),
+    # a word that only sounds like a term is read as it too, with a caution mark
+    ("layer 100 to 83 pensil crust", "~ Layer 100–83 cm: P, melt-freeze crust (heard “pensil” as pencil)"),
+    ("compression test 21 sudden planner at 30", "✓ CT21SP at 30 cm (heard “planner” as planar)"),
+    ("compression test 12 brake at 30", "✓ CT12BRK at 30 cm (heard “brake” as break)"),
+    ("sky broke in", "✓ Sky: BKN (broken) (heard “broke in” as broken)"),
+    ("layer 100 283 fist rounds", "~ Layer 100–83 cm: F, rounded grains (heard “283” as to 83)"),
+])
+def test_mishearings_are_read_as_the_term_and_said_back(said, read):
+    assert _read("height", 100, [said]) == read
+
+
+def test_ordinary_words_are_not_turned_into_terms():
+    """Names and notes keep their words, a lead word needs its value after it, and chatter stays "not understood"."""
+    assert _read("height", 100, ["location First Lake Wind Ridge", "observer Skye Later"]) == "✓ Location: First Lake Wind Ridge\n✓ Observer: Skye Later"
+    assert _read("height", 100, ["note the first one failed later when the wind picked up"]) == "✓ Note: the first one failed later when the wind picked up"
+    assert _read("height", 100, ["layer 100 to 83 fist rounds", "when I got there it was later"]).endswith("✗ Not understood: “when I got there it was later”")
+    assert _read("height", 100, ["layer 100 to 83 pencil wind slab"]) == "✓ Layer 100–83 cm: P, wind packed"
+    assert _read("height", 100, ["layer 100 to 83 fist rounds label March 3 rain crust"]) == "✓ Layer 100–83 cm: F, rounded grains, “March 3 rain crust”"
+    assert _read("height", 100, ["the first one failed"]) == "✗ Not understood: “the first one failed”"
+    assert _read("height", 100, ["wind"]) == "✗ Not understood: “wind”"
+
+
+@pytest.mark.parametrize("mode, hs, said, read", [
+    # "depth" and "down" are always below the surface, "up" always above the ground, whichever way the page is set
+    ("height", 100, ["compression test 21 sudden planar depth 30"], "✓ CT21SP at 30 cm below the surface (height 70 cm)"),
+    ("height", 100, ["compression test 21 sudden planar down 30"], "✓ CT21SP at 30 cm below the surface (height 70 cm)"),
+    ("height", 100, ["compression test 21 sudden planar 30 cm deep"], "✓ CT21SP at 30 cm below the surface (height 70 cm)"),
+    ("height", 100, ["compression test 21 sudden planar at 30"], "✓ CT21SP at 30 cm"),
+    ("depth", 100, ["compression test 21 sudden planar depth 30"], "✓ CT21SP at 30 cm"),
+    ("depth", 100, ["compression test 21 sudden planar up 30"], "✓ CT21SP at 30 cm above the ground (depth 70 cm)"),
+    ("height", 100, ["temperature at depth 20 minus 3"], "✓ Temperature -3 °C at 20 cm below the surface (height 80 cm)"),
+    ("height", 100, ["depth 30 to 50 four finger facets"], "✓ Layer 70–50 cm: 4F, faceted crystals (said as depths below the surface)"),
+    ("height", 100, ["layer 30 to the ground fist depth hoar"], "✓ Layer 30–0 cm: F, depth hoar"),
+    ("height", None, ["depth 150"], "✓ Snow depth (HS): 150 cm"),
+    ("height", None, ["death 150"], "✓ Snow depth (HS): 150 cm (heard “death” as depth)"),
+    # the microphone hands a sentence over in pieces when the speaker pauses
+    ("height", 100, ["compression test 21 sudden planar", "depth 30"],
+     "~ CT21SP: now say where it failed, for example “down 30”.\n✓ CT21SP at 30 cm below the surface (height 70 cm)"),
+    ("height", 100, ["layer 100 to 83", "fist", "rounds", "half a millimetre"],
+     "✓ Layer 100–83 cm\n✓ Layer 100–83 cm: F\n✓ Layer 100–83 cm: F, rounded grains\n✓ Layer 100–83 cm: F, rounded grains, 0.5 mm"),
+])
+def test_depth_words_and_sentences_split_by_a_pause(mode, hs, said, read):
+    assert _read(mode, hs, said) == read
+
+
+def test_stored_depths_for_spoken_depths_and_heights():
+    r = _run("""const { m } = build("height", ["snow depth 120", "CT 12 SP down 20", "CT 14 SP up 20", "CT 16 SP at 20", "temperature 10 down minus 4", "surface temperature minus 9"]);
+      console.log(JSON.stringify({ tests: m.tests.map(t => t.depth), temps: m.temps.map(t => [t.depth, t.t]) }));""")
+    assert r == {"tests": [20, 100, 100], "temps": [[0, -9], [10, -4]]}
+
+
+def test_a_statement_still_waiting_for_its_value_is_held_back():
+    """From the microphone, "snow depth" with no number yet is kept for the next words; and of several versions of one
+    sentence the recogniser offers, the page takes the one that reads best."""
+    r = _run("""const tail = t => { const a = P.parse(t); return [a.tail, a.tailCount, a.length]; };
+      console.log(JSON.stringify({ a: tail("sky broken snow depth"), b: tail("sky broken wind"), c: tail("layer 100 to"), d: tail("sky broken"), e: tail("temperature 90"),
+        best: [P.best(["later 100 to 83 fissed rounds", "layer 100 to 83 fist rounds"]), P.best(["sky broken", "sky broke in"]), P.best(["the dog", "the dug"])] }));""")
+    assert r["a"] == ["snow depth", 1, 2] and r["b"] == ["wind", 1, 2] and r["c"] == ["layer 100 to", 1, 1]
+    assert r["d"] == ["", 0, 1] and r["e"] == ["temperature 90", 1, 1] and r["best"] == [1, 0, 0]
+
+
+def test_closest_match_needs_the_same_sound():
+    r = _run("""const L = ["facets", "fists", "pencil", "knife", "rounds", "crust", "moist", "planar", "broken", "overcast"];
+      console.log(JSON.stringify(["fossets", "pensil", "planner", "brocken", "overcasts", "rounds", "pounds", "trust", "mast", "fish", "the"].map(w => P.closest(w, L))));""")
+    assert r == ["facets", "pencil", "planar", "broken", "overcast", None, None, None, None, None, None]
+
+
+def test_words_a_statement_did_not_use_are_said_back_not_dropped():
+    assert _read("height", 100, ["wind calm the dog"]) == "✓ Wind: C (calm)\n✗ Not understood: “the dog”"
+    assert _read("height", 100, ["sky broken and something else wind light"]) == "✓ Sky: BKN (broken)\n✗ Not understood: “and something else”\n✓ Wind: L (light)"
+    assert _read("height", 100, ["temperature 20 minus 3 banana"]) == "✓ Temperature -3 °C at 20 cm\n✗ Not understood: “banana”"
+    assert _read("height", 100, ["elevation 2080 metres above sea level, slope 28 degrees"]) == "✓ Elevation: 2080 m\n✓ Slope: 28°"
+    assert _read("height", 100, ["wind strong west gusting extreme"]) == "✓ Wind: S (strong)\n✓ Wind from: W"
