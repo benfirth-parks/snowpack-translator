@@ -4,7 +4,7 @@
    storage and nothing is sent anywhere. */
 (function () {
   "use strict";
-  const P = window.SnowSpeak, M = window.SnowModel, D = window.SnowDraw;
+  const P = window.SnowSpeak, M = window.SnowModel, D = window.SnowDraw, S = window.SnowSend;
   const $ = id => document.getElementById(id);
   const $$ = (q, root) => Array.from((root || document).querySelectorAll(q));
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -498,6 +498,27 @@
     im.onerror = () => toast("The image couldn't be made."); im.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(D.svg(page));
   };
   $("toSatBtn").onclick = () => { closeSheet("exportSheet"); setTab("sat"); persist(); };
+
+  /* ---------- send to the Banff Snowpack app (the only link between the two apps) ---------- */
+  const outText = list => list.length ? `${list.length} waiting to send` : "Adds it to the Banff Snowpack app";
+  const outbox = S.start(list => { $("sendSmall").textContent = outText(list); });
+  $("sendSmall").textContent = outText(outbox.pending());
+  let sendSite = "other";
+  const renderSendSite = () => press("#sdSite .chip", b => b.dataset.s === sendSite);
+  $("sdSite").innerHTML = S.SITES.map(x => `<button type="button" class="chip" data-s="${x.id}" aria-pressed="false">${esc(x.label)}</button>`).join("");
+  $("sdSite").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (b) { sendSite = b.dataset.s; renderSendSite(); } });
+  $("sendBtn").onclick = () => {
+    if (nothingYet()) return; closeSheet("exportSheet");
+    sendSite = S.guessSite(m.site.location || m.name); renderSendSite(); openSheet("sendSheet");
+  };
+  $("sdGo").onclick = async () => {
+    closeSheet("sendSheet");
+    try {
+      const r = await outbox.add({ pitId: m.id, filename: baseName() + ".caaml.xml", xml: M.caaml(m), site: sendSite,
+        location: m.site.location || m.name || "", date: m.site.date || nowLocal(), source: "voice page" });
+      toast(r.left ? "No signal. It's saved on this phone and sends when you're back in range." : "Sent to Snowpack. It's added at the next daily update.");
+    } catch (e) { toast(e.message || String(e)); }
+  };
 
   /* ---------- observations and settings ---------- */
   const obsName = o => o.name || o.site.location || "Untitled";

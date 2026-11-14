@@ -201,10 +201,16 @@ img{max-width:100%}
           <button id="zipBtn" type="button" class="primary">Download CAAML</button>
           <button id="xmlBtn" type="button">Download XML</button>
           <button id="copyBtn" type="button">Copy XML</button>
+          <button id="sendBtn" type="button">Send to Snowpack</button>
         </div>
       </div>
+      <div class="row" id="sendRow" hidden style="margin:8px 0">
+        <label>Study plot <select id="sendSite"></select></label>
+        <button id="sendGo" type="button" class="primary">Send this profile</button>
+        <span class="tag" id="sendTag"></span>
+      </div>
       <div id="chart"></div>
-      <p class="note" id="exportNote">Download PDF gives the full manual snow profile sheet. Download CAAML gives a .zip holding <code>profile.caaml.xml</code>, the chart, the photo and a JSON copy; Download XML gives the CAAML file alone. It follows CAAML 6.0.3 SnowProfileIACS but has not been run through the schema validator yet.</p>
+      <p class="note" id="exportNote">Download PDF gives the full manual snow profile sheet. Download CAAML gives a .zip holding <code>profile.caaml.xml</code>, the chart, the photo and a JSON copy; Download XML gives the CAAML file alone. Send to Snowpack adds the profile to the Banff Snowpack app at its next daily update; with no signal it waits on this device and sends when you're back in range. It follows CAAML 6.0.3 SnowProfileIACS but has not been run through the schema validator yet.</p>
       <details><summary>Show CAAML XML</summary><pre class="xml" id="xmlOut"></pre></details>
     </section>
   </div>
@@ -256,6 +262,7 @@ img{max-width:100%}
 <script src="js/parse.js"></script>
 <script src="js/model.js"></script>
 <script src="js/draw.js"></script>
+<script src="js/send.js"></script>
 <script>
 "use strict";
 /* ---------- reference data ---------- */
@@ -876,6 +883,16 @@ $("zipBtn").onclick=async()=>{
   }catch(e){toast("The export couldn't be built: "+(e.message||e));}
 };
 $("xmlBtn").onclick=()=>save(baseName()+".caaml.xml",new Blob([caaml()],{type:"application/xml"}));
+
+/* ---------- send to the Banff Snowpack app (the only link between the two apps) ---------- */
+const outbox=SnowSend.start(list=>{$("sendTag").textContent=list.length?list.length+" waiting to send":"";});
+$("sendSite").innerHTML=SnowSend.SITES.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join("");
+$("sendBtn").onclick=()=>{if(!S.layers.length){toast("Detect or add layers first.");return;}$("sendSite").value=SnowSend.guessSite(S.site.location);$("sendRow").hidden=false;$("sendTag").textContent=outbox.pending().length?outbox.pending().length+" waiting to send":"";};
+$("sendGo").onclick=async()=>{
+  try{const r=await outbox.add({pitId:"photo-"+baseName(),filename:baseName()+".caaml.xml",xml:caaml(),site:$("sendSite").value,location:S.site.location||"",date:S.site.date||nowLocal(),source:"photo page"});
+    $("sendRow").hidden=true;toast(r.left?"No signal. Saved here; it sends when you're back in range.":"Sent to Snowpack. It's added at the next daily update.");}
+  catch(e){toast(e.message||String(e));}
+};
 $("copyBtn").onclick=e=>{
   const x=caaml();
   navigator.clipboard.writeText(x).then(()=>toast("CAAML XML copied"),()=>{const d=$("xmlOut").closest("details");d.open=true;const r=document.createRange();r.selectNodeContents($("xmlOut"));const s=getSelection();s.removeAllRanges();s.addRange(r);toast("Copy blocked here. The XML is selected below.");});

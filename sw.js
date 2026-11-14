@@ -3,8 +3,8 @@
 // update shows at once) and come from the cache when there is none, or when the network takes more than 3 seconds,
 // as it does on one bar in the mountains. Google Fonts are cached as they load; without them the pages fall back to
 // system fonts. Bump VERSION whenever a file in SHELL changes.
-const VERSION = "pit-v3";
-const SHELL = ["./", "./index.html", "./voice.html", "./js/parse.js", "./js/model.js", "./js/draw.js", "./js/voice.js",
+const VERSION = "pit-v4";
+const SHELL = ["./", "./index.html", "./voice.html", "./js/parse.js", "./js/model.js", "./js/draw.js", "./js/voice.js", "./js/send.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png", "./apple-touch-icon.png"];
 
 // A host with "pretty URLs" (Netlify) answers voice.html with a redirect to /voice. A redirected response cannot
