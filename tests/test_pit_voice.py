@@ -174,7 +174,7 @@ def test_voice_page_has_every_element_its_script_drives():
     pit = JS.parent
     html, js = (pit / "voice.html").read_text(), (JS / "voice.js").read_text()
     ids = set(re.findall(r'\bid="([^"]+)"', html))
-    used = set(re.findall(r'\$\("([A-Za-z0-9_-]+)"\)', js)) | set(re.findall(r'(?:open|close)Sheet\("([A-Za-z0-9_-]+)"\)', js))
+    used = set(re.findall(r'(?<!\$)\$\("([A-Za-z0-9_-]+)"\)', js)) | set(re.findall(r'(?:open|close)Sheet\("([A-Za-z0-9_-]+)"\)', js))
     assert len(used) > 60 and used <= ids, sorted(used - ids)
     assert set(re.findall(r'data-k="([^"]+)"', html)) >= {"name", "site.date", "site.location", "surf.hs", "wx.sky", "avs", "notes"}
 
@@ -183,8 +183,9 @@ def test_service_worker_caches_every_file_the_pages_load():
     pit = JS.parent
     shell = set(re.findall(r'"\./([^"]*)"', re.search(r"const SHELL = \[(.*?)\];", (pit / "sw.js").read_text(), re.S).group(1)))
     for page in ("index.html", "voice.html"):
-        local = {s for s in re.findall(r'<script[^>]* src="([^"]+)"', (pit / page).read_text()) if "//" not in s}
-        assert page in shell and local <= shell, (page, local - shell)
+        html = (pit / page).read_text()
+        local = {s for s in re.findall(r'<script[^>]* src="([^"]+)"', html) + re.findall(r'<link rel="stylesheet" href="([^"]+)"', html) if "//" not in s}
+        assert page in shell and {"css/app.css", "js/theme.js"} <= local <= shell, (page, local - shell)
     assert all((pit / f).is_file() for f in shell if f)
 
 
@@ -196,3 +197,57 @@ def test_photo_page_links_to_voice_and_satellite_text_and_offline_copies_are_pla
     assert re.findall(r'href="([^"]+)"', nav) == ["./", "voice.html", "voice.html#sat"]
     sw = (pit / "sw.js").read_text()
     assert "addAll" not in sw and "res.redirected" in sw and ".then(plain)" in sw and "plain(res.clone())" in sw
+
+
+def test_all_three_pages_share_one_look_and_one_light_dark_switch():
+    """Voice and Sat text use the photo page's stylesheet, header and tabs. The theme script sits in <head> so the
+    right colours are there from the first frame, and each page carries the same Light / Dark switch."""
+    pit = JS.parent
+    for page in ("index.html", "voice.html"):
+        html = (pit / page).read_text()
+        head = html[: html.index("</head>")]
+        assert '<link rel="stylesheet" href="css/app.css">' in head and '<script src="js/theme.js"></script>' in head, page
+        assert "data-theme=" not in re.search(r"<html[^>]*>", html).group(0), page  # no page forces a theme of its own
+        nav = re.search(r'<nav class="tabs".*?</nav>', html, re.S).group(0)
+        assert re.findall(r'href="([^"]+)"', nav) == ["./", "voice.html", "voice.html#sat"], page
+        assert re.findall(r'data-theme-set="([^"]+)"', html) == ["light", "dark"], page
+    css = (pit / "css" / "app.css").read_text()
+    assert ':root[data-theme="dark"]' in css and ':root:not([data-theme="light"])' in css
+    # colours come from the shared stylesheet only: the voice page defines none of its own
+    assert not re.search(r"--(bg|panel|ink|accent)\s*:", (pit / "voice.html").read_text())
+
+
+def test_theme_choice_is_kept_and_shared_and_follows_the_phone_until_chosen():
+    """js/theme.js on a stand-in page. Nothing stored follows the phone. A choice is stored, marks <html> and tells the
+    page to redraw. A light choice made on the old voice page carries over; anything else stored is ignored."""
+    r = _run(f"""const src = require("fs").readFileSync({json.dumps(str(JS / "theme.js"))}, "utf8");
+      function boot(store, phoneDark) {{
+        const attrs = {{}}, events = [], handlers = {{}};
+        const root = {{ setAttribute: (k, v) => {{ attrs[k] = v; }}, removeAttribute: k => {{ delete attrs[k]; }}, dispatchEvent: e => {{ events.push(e.detail); }} }};
+        const document = {{ documentElement: root, querySelector: () => null, querySelectorAll: () => [], addEventListener: (t, f) => {{ handlers[t] = f; }} }};
+        const window = {{ matchMedia: () => ({{ matches: phoneDark, addEventListener() {{}} }}), addEventListener() {{}} }};
+        const localStorage = {{ getItem: k => (k in store ? store[k] : null), setItem: (k, v) => {{ store[k] = String(v); }} }};
+        class CustomEvent {{ constructor(t, o) {{ this.type = t; this.detail = o.detail; }} }}
+        new Function("window", "document", "localStorage", "CustomEvent", src)(window, document, localStorage, CustomEvent);
+        return {{ attrs, events, store, handlers, T: window.SnowTheme }};
+      }}
+      const a = boot({{}}, true), first = [a.T.get(), a.attrs["data-theme"] || ""];
+      a.T.set("light"); const chosen = [a.T.get(), a.attrs["data-theme"], a.store["snowpack-theme"], a.events.join()];
+      a.T.set("sepia"); const bad = a.T.get();
+      a.handlers.click({{ target: {{ closest: () => ({{ getAttribute: () => "dark" }}) }} }}); const tapped = [a.T.get(), a.store["snowpack-theme"]];
+      const b = boot({{ "snowpack-theme": "dark" }}, false), c = boot({{ "snowpack-voice-settings-v1": JSON.stringify({{ theme: "light" }}) }}, true);
+      const d = boot({{ "snowpack-voice-settings-v1": JSON.stringify({{ theme: "dark" }}) }}, false), e = boot({{ "snowpack-theme": "purple" }}, false);
+      console.log(JSON.stringify({{ first, chosen, bad, tapped, b: [b.T.get(), b.attrs["data-theme"]], c: [c.T.get(), c.store["snowpack-theme"]],
+        d: [d.T.get(), d.attrs["data-theme"] || ""], e: [e.T.get(), e.attrs["data-theme"] || ""] }}));""")
+    assert r["first"] == ["dark", ""] and r["chosen"] == ["light", "light", "light", "light"] and r["bad"] == "light"
+    assert r["tapped"] == ["dark", "dark"] and r["b"] == ["dark", "dark"] and r["c"] == ["light", "light"]
+    assert r["d"] == ["light", ""] and r["e"] == ["light", ""]
+
+
+def test_on_screen_graph_has_page_coloured_day_and_night_palettes():
+    """The graph on the page is drawn in the page's own colours; the PDF and the saved chart stay on white paper."""
+    r = _run(f"""const {{ m }} = build("depth", {json.dumps(NAKISKA)});
+      const bg = t => /<rect[^>]*fill="(#[0-9a-f]+)"/.exec(D.svg(D.screen(m, 358, 470, t)))[1];
+      console.log(JSON.stringify({{ day: bg("day"), night: bg("night"), paper: bg("light"),
+        keys: ["day", "night"].map(t => Object.keys(D.THEMES[t]).sort().join() === Object.keys(D.THEMES.light).sort().join()) }}));""")
+    assert r["day"] == "#fbfdfe" and r["night"] == "#141f27" and r["paper"] == "#ffffff" and r["keys"] == [True, True]

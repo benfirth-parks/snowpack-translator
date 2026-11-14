@@ -1,7 +1,8 @@
 /* Snowpack Translator, voice page: speech (or typing) in, snow profile + PDF + satellite text out.
-   Laid out like a field recorder: Info / Profile / Sat text tabs, a speak bar, and bottom sheets for a layer,
-   a test result and a temperature. Everything stays on the phone: observations are kept in this browser's
-   storage and nothing is sent anywhere. */
+   It wears the photo page's look (css/app.css): the same header and tabs, panels for the profile, layers, site and
+   weather, and pop-up sheets for a layer, a test result and a temperature. One page holds two views, Voice and
+   Sat text, switched by the tabs in the header. Observations are kept in this browser's storage; only
+   Send to Snowpack uploads anything. */
 (function () {
   "use strict";
   const P = window.SnowSpeak, M = window.SnowModel, D = window.SnowDraw, S = window.SnowSend;
@@ -12,8 +13,8 @@
   const IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   let store = { cur: null, list: [] };
-  let cfg = { to: "", sat: {}, auto: true, tab: "profile", observer: "", org: "", elevUnit: "m", ref: "height", mirror: true, theme: "dark" };
-  let m = null, log = [], undo = [], redo = [], sel = -1, satManual = null, tab = "profile", editTag = null;
+  let cfg = { to: "", sat: {}, auto: true, observer: "", org: "", elevUnit: "m", ref: "height", mirror: true };
+  let m = null, log = [], undo = [], redo = [], sel = -1, satManual = null, view = "voice", editTag = null;
 
   function toast(msg) { // shown inside the open sheet, if any, so a sheet never covers it
     const t = $("toast"), host = $$("dialog[open]").pop() || document.body;
@@ -98,7 +99,7 @@
   function setSay(v) { $("say").value = v; preview(); }
   function showLast(e) {
     const bad = e.res.filter(r => r.k === "bad"), k = bad.length ? "bad" : e.res.some(r => r.k === "warn") ? "warn" : "ok", lead = bad[0] || e.res[0], more = e.res.length - 1;
-    $("last").innerHTML = linesHtml([{ k, say: lead.say + (more > 0 ? `  (+${more} more)` : ""), hint: bad.length ? lead.hint : "" }]) + `<button type="button" id="lastAll">All heard</button>`;
+    $("last").innerHTML = linesHtml([{ k, say: lead.say + (more > 0 ? `  (+${more} more)` : ""), hint: bad.length ? lead.hint : "" }]) + `<button type="button" class="ghost" id="lastAll">All heard</button>`;
     $("last").hidden = false;
   }
   function add(text) {
@@ -106,7 +107,7 @@
     const acts = P.parse(text);
     if (acts.length && acts.every(a => a.type === "undo")) { setSay(""); doUndo(); return true; }
     const real = acts.filter(a => a.type !== "undo");
-    if (!M.apply(JSON.parse(JSON.stringify(m)), real).some(r => r.ok)) { preview(); toast("Not understood, so nothing was added. Fix the words, or open the gear for “What can I say?”"); return false; }
+    if (!M.apply(JSON.parse(JSON.stringify(m)), real).some(r => r.ok)) { preview(); toast("Not understood, so nothing was added. Fix the words, or tap “What can I say?”"); return false; }
     snap();
     const out = M.apply(m, real), e = { text, res: resLines(out) };
     log.unshift(e); if (log.length > 200) log.length = 200;
@@ -156,33 +157,33 @@
   /* ---------- sheets ---------- */
   function openSheet(id) { const d = $(id); if (d.open) return; if (d.showModal) d.showModal(); else d.setAttribute("open", ""); }
   function closeSheet(id) { const d = typeof id === "string" ? $(id) : id; if (!d.open) return; if (d.close) d.close(); else d.removeAttribute("open"); }
-  $$("dialog.sheet").forEach(d => {
+  $$("dialog").forEach(d => {
     d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-close]")) closeSheet(d); });
     d.addEventListener("close", () => { const t = $("toast"); if (d.contains(t)) document.body.appendChild(t); editTag = null; });
   });
 
   /* ---------- profile tab: graph, selected layer, flags ---------- */
   function renderGraph() {
-    if (tab !== "profile") return;
-    const box = $("graph"), W = Math.max(300, Math.round(box.clientWidth || 340)), H = Math.round(Math.max(440, Math.min(700, W * 1.12))), light = cfg.theme === "light";
-    box.className = light ? "light" : "";
-    box.innerHTML = D.svg(D.screen(m, W, H, light ? "light" : "dark", { sel, mirror: !!cfg.mirror }), "Snow profile graph: hand hardness by " + (isHeight() ? "height" : "depth"));
+    if (view !== "voice") return;
+    const box = $("graph"), W = Math.max(300, Math.round(box.clientWidth || 340)), H = Math.round(Math.max(440, Math.min(700, W * 1.12)));
+    const dark = !!window.SnowTheme && window.SnowTheme.get() === "dark"; // drawn in the page's own colours, light or dark
+    box.innerHTML = D.svg(D.screen(m, W, H, dark ? "night" : "day", { sel, mirror: !!cfg.mirror }), "Snow profile graph: hand hardness by " + (isHeight() ? "height" : "depth"));
   }
   function renderSel() {
     const L = m.layers[sel], box = $("selbar");
-    if (L) { box.innerHTML = `<span>${isHeight() ? "Height" : "Depth"}: <b>${M.fmt(M.toRef(m, L.top))} – ${M.fmt(M.toRef(m, L.bottom))} cm</b></span><button type="button" class="primary" id="editLayerBtn" style="min-height:38px">Edit Layer</button>`; return; }
+    if (L) { box.innerHTML = `<span>${isHeight() ? "Height" : "Depth"}: <b>${M.fmt(M.toRef(m, L.top))} – ${M.fmt(M.toRef(m, L.bottom))} cm</b></span><button type="button" class="primary" id="editLayerBtn">Edit layer</button>`; return; }
     const hint = m.layers.length ? "Tap a layer to edit it."
       : isHeight() && M.num(m.surf.hs) == null ? "Record the snowpack height to begin."
-      : isHeight() ? `Say “layer ${M.fmt(m.surf.hs)} to ${M.fmt(Math.max(0, m.surf.hs - 15))} fist rounds”, or tap + Layer.` : "Say “layer 0 to 35 fist rounds”, or tap + Layer.";
-    box.innerHTML = `<span class="hint">${hint}</span>`;
+      : isHeight() ? `Say “layer ${M.fmt(m.surf.hs)} to ${M.fmt(Math.max(0, m.surf.hs - 15))} fist rounds”, or tap Add layer.` : "Say “layer 0 to 35 fist rounds”, or tap Add layer.";
+    box.innerHTML = `<p class="hint">${hint}</p>`;
   }
   const FLAG = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 2h2v20H5zM8 3h11l-2.500 4.500L19 12H8z"/></svg>`;
   const FLAG_NAMES = { size: "grain size > 1 mm", hard: "softer than 1F", type: "persistent grain type", dSize: "grain size difference > 0.5 mm", dHard: "hardness difference > 1 step", depth: "20 to 85 cm deep" };
   function renderFlags() {
     const fl = M.flags(m).max;
     $("flagBox").innerHTML = fl
-      ? `<div class="flags">${FLAG}<span>${fl.n} <span style="font-weight:500">at ${M.fmt(M.toRef(m, fl.depth))} cm ${isHeight() ? "height" : "depth"}</span></span></div><p class="note">${esc(Object.keys(fl.f).filter(k => fl.f[k]).map(k => FLAG_NAMES[k]).join(" · "))}</p>`
-      : `<p class="note" style="margin-top:2px;font-size:14.5px">${m.layers.length > 1 ? "No flags at any layer boundary." : "Needs two layers with hardness, grain form and size."}</p>`;
+      ? `<div class="flags">${FLAG}<b>${fl.n}</b><span>at ${M.fmt(M.toRef(m, fl.depth))} cm ${isHeight() ? "height" : "depth"}</span></div><p class="hint">${esc(Object.keys(fl.f).filter(k => fl.f[k]).map(k => FLAG_NAMES[k]).join(" · "))}</p>`
+      : `<p class="hint" style="margin-top:0">${m.layers.length > 1 ? "No flags at any layer boundary." : "Needs two layers with hardness, grain form and size."}</p>`;
   }
   function select(i) { sel = i; renderGraph(); renderSel(); $$("#layerTbl tr[data-i]").forEach(r => r.classList.toggle("sel", +r.dataset.i === sel)); }
   $("graph").addEventListener("click", e => { const r = e.target.closest(".lay"); if (!r) { if (sel >= 0) select(-1); return; } const i = +r.dataset.i; if (sel === i) openLayer(i); else select(i); });
@@ -197,25 +198,25 @@
   const opt = (list, val, none) => `<option value=""${val ? "" : " selected"}>${none || "–"}</option>` + list.map(o => { const k = Array.isArray(o) ? o[0] : o, t = Array.isArray(o) ? o[1] : o; return `<option value="${esc(k)}"${k === val ? " selected" : ""}>${esc(t)}</option>`; }).join("");
   const GRAIN_OPTS = Object.keys(M.GRAINS).map(k => [k, `${k} · ${M.GRAINS[k]}`]);
   function renderTables() {
-    const word = isHeight() ? "Height" : "Depth", dash = `<span style="color:var(--muted)">--</span>`, none = (n, t) => `<tr><td colspan="${n}" style="color:var(--muted);white-space:normal">${t}</td></tr>`;
+    const word = isHeight() ? "Height" : "Depth", dash = `<span style="color:var(--muted)">--</span>`, none = (n, t) => `<tr><td colspan="${n}" class="cell-wrap" style="color:var(--muted)">${t}</td></tr>`;
     let h = `<thead><tr><th>#</th><th>${word} (cm)</th><th>Hardness</th><th>Form</th><th>Size (mm)</th><th>Note</th><th></th></tr></thead><tbody>`;
     if (!m.layers.length) h += none(7, "No layers yet.");
     m.layers.forEach((l, i) => {
-      h += `<tr data-i="${i}"${i === sel ? ' class="sel"' : ""} style="cursor:pointer"><td class="idx">${i + 1}</td><td>${M.fmt(M.toRef(m, l.top))} – ${M.fmt(M.toRef(m, l.bottom))}</td><td>${esc(M.hardLabel(l)) || dash}</td><td>${esc(M.grainLabel(l)) || dash}</td><td>${esc(M.sizeLabel(l)) || dash}</td>`
-        + `<td style="white-space:normal;min-width:96px">${l.concern ? `<b style="color:var(--bad)">Concern</b> ` : ""}${esc(l.note)}</td><td><button class="quiet" type="button" aria-label="Edit layer ${i + 1}">Edit</button></td></tr>`;
+      h += `<tr data-i="${i}" class="row-open${i === sel ? " sel" : ""}"><td class="idx">${i + 1}</td><td>${M.fmt(M.toRef(m, l.top))} – ${M.fmt(M.toRef(m, l.bottom))}</td><td>${esc(M.hardLabel(l)) || dash}</td><td>${esc(M.grainLabel(l)) || dash}</td><td>${esc(M.sizeLabel(l)) || dash}</td>`
+        + `<td class="cell-wrap">${l.concern ? `<b style="color:var(--bad)">Concern</b> ` : ""}${esc(l.note)}</td><td><button class="ghost" type="button" aria-label="Edit layer ${i + 1}">Edit</button></td></tr>`;
     });
     $("layerTbl").innerHTML = h + "</tbody>";
     h = `<thead><tr><th>${word} (cm)</th><th>Snow temperature (°C)</th><th></th></tr></thead><tbody>`;
-    if (!m.temps.length) h += none(3, "No readings yet. Say “temperature 20 minus 3.5”, or tap + Temp.");
-    m.temps.forEach((t, i) => { h += `<tr data-i="${i}"><td><input type="number" inputmode="decimal" step="any" data-f="depth" value="${M.toRef(m, t.depth)}" aria-label="${word}"></td><td><input type="number" step="any" data-f="t" value="${esc(t.t)}" aria-label="Temperature"></td><td><button class="quiet" data-act="del" type="button" aria-label="Delete this reading">Delete</button></td></tr>`; });
+    if (!m.temps.length) h += none(3, "No readings yet. Say “temperature 20 minus 3.5”, or tap Add reading.");
+    m.temps.forEach((t, i) => { h += `<tr data-i="${i}"><td><input type="number" inputmode="decimal" step="any" data-f="depth" value="${M.toRef(m, t.depth)}" aria-label="${word}"></td><td><input type="number" step="any" data-f="t" value="${esc(t.t)}" aria-label="Temperature"></td><td><button class="ghost" data-act="del" type="button" aria-label="Delete this reading">Delete</button></td></tr>`; });
     $("tempTbl").innerHTML = h + "</tbody>";
     h = `<thead><tr><th>Test</th><th>${word} (cm)</th><th>Note</th><th></th></tr></thead><tbody>`;
-    if (!m.tests.length) h += none(4, "No tests yet. Say “compression test 21 sudden planar at 60”, or tap + Test Result.");
-    m.tests.forEach((t, i) => { h += `<tr data-i="${i}"><td><b style="font-family:var(--mono)">${esc(M.testLabel(t))}</b></td><td><input type="number" inputmode="decimal" step="any" data-f="depth" value="${M.num(t.depth) != null ? M.toRef(m, t.depth) : ""}" aria-label="${word}"></td><td><input type="text" data-f="note" value="${esc(t.note)}" aria-label="Note"></td><td><button class="quiet" data-act="del" type="button" aria-label="Delete ${esc(M.testLabel(t))}">Delete</button></td></tr>`; });
+    if (!m.tests.length) h += none(4, "No tests yet. Say “compression test 21 sudden planar at 60”, or tap Add test.");
+    m.tests.forEach((t, i) => { h += `<tr data-i="${i}"><td><b class="tname">${esc(M.testLabel(t))}</b></td><td><input type="number" inputmode="decimal" step="any" data-f="depth" value="${M.num(t.depth) != null ? M.toRef(m, t.depth) : ""}" aria-label="${word}"></td><td><input type="text" data-f="note" value="${esc(t.note)}" aria-label="Note"></td><td><button class="ghost" data-act="del" type="button" aria-label="Delete ${esc(M.testLabel(t))}">Delete</button></td></tr>`; });
     $("testTbl").innerHTML = h + "</tbody>";
-    $("sumLayers").textContent = m.layers.length ? `${m.layers.length} to ${M.fmt(M.pitBottom(m))} cm deep` : "none yet";
-    $("sumTemps").textContent = m.temps.length ? `${m.temps.length} reading${m.temps.length > 1 ? "s" : ""}` : "none yet";
-    $("sumTests").textContent = m.tests.length ? m.tests.map(M.testLabel).join(", ") : "none yet";
+    $("sumLayers").textContent = m.layers.length ? `${m.layers.length} to ${M.fmt(M.pitBottom(m))} cm deep` : "";
+    $("sumTemps").textContent = m.temps.length ? `${m.temps.length} reading${m.temps.length > 1 ? "s" : ""}` : "";
+    $("sumTests").textContent = m.tests.length ? `${m.tests.length} test${m.tests.length > 1 ? "s" : ""}` : "";
   }
   function buttons() { $("undoBtn").disabled = !undo.length; $("redoBtn").disabled = !redo.length; $("delLayerBtn").disabled = !m.layers.length; }
   function afterEdit(keepTables) { satManual = null; if (!keepTables) renderTables(); renderForm(); renderGraph(); renderSel(); renderFlags(); renderSat(); renderObs(); buttons(); persist(); }
@@ -245,24 +246,24 @@
   const HB = /^(4F|1F|F|P|K|I)([+-]?)$/, HBASES = [["F", "Fist"], ["4F", "4 finger"], ["1F", "1 finger"], ["P", "Pencil"], ["K", "Knife"], ["I", "Ice"]];
   const CHIP_GRAINS = ["PP", "DF", "RG", "FC", "DH", "SH", "MF", "MFcr", "IF"];
   function glyphSvg(code) { const L = []; return D.glyph(L, code, 9, 9, 6, "currentColor") ? D.svg({ w: 18, h: 18, list: L }, "").replace(/ role="img" aria-label="[^"]*"/, ' aria-hidden="true"') : ""; }
-  $("lsHard").innerHTML = HBASES.map(([k, n]) => `<button type="button" class="chip" data-h="${k}" aria-pressed="false">${k} <small>${n}</small></button>`).join("");
+  $("lsHard").innerHTML = HBASES.map(([k, n]) => `<button type="button" class="hh-btn" data-h="${k}" aria-pressed="false"><b>${k}</b><small>${n}</small></button>`).join("");
   $("lsHardBot").innerHTML = opt(M.HARD, "", "Same as the top");
-  $("lsGrain").innerHTML = CHIP_GRAINS.map(k => `<button type="button" class="chip" data-g="${k}" aria-pressed="false" aria-label="${esc(M.GRAINS[k])}" title="${esc(M.GRAINS[k])}">${glyphSvg(k)}${k}</button>`).join("");
+  $("lsGrain").innerHTML = CHIP_GRAINS.map(k => `<button type="button" class="pick" data-g="${k}" aria-pressed="false" aria-label="${esc(M.GRAINS[k])}" title="${esc(M.GRAINS[k])}">${glyphSvg(k)}${k}</button>`).join("");
   $("lsGrainSel").innerHTML = opt(GRAIN_OPTS, ""); $("lsGrain2").innerHTML = opt(GRAIN_OPTS, "", "None");
-  $("lsWet").innerHTML = Object.keys(M.WET).map(k => `<button type="button" class="chip" data-w="${k}" aria-pressed="false">${k} <small>${M.WET[k]}</small></button>`).join("");
+  $("lsWet").innerHTML = Object.keys(M.WET).map(k => `<button type="button" class="pick" data-w="${k}" aria-pressed="false">${k} <small>${M.WET[k]}</small></button>`).join("");
   let LS = null; // id of the layer open in the sheet
   const curLayer = () => m.layers.find(l => l.id === LS);
   function selValue(id, v) { const el = $(id), s = v || ""; if (s && !Array.from(el.options).some(o => o.value === s)) el.add(new Option(s, s)); el.value = s; }
   function fillLayer() {
     const L = curLayer(); if (!L) return; const i = m.layers.indexOf(L), hb = HB.exec(L.hardTop || "") || [];
     $("ls-h").textContent = `Layer ${i + 1} of ${m.layers.length}`;
-    $("lsDepthLbl").textContent = isHeight() ? "Height from the ground:" : "Depth from the surface:";
+    $("lsDepthLbl").textContent = isHeight() ? "Height from the ground" : "Depth from the surface";
     setVal("lsTop", M.toRef(m, L.top)); setVal("lsBottom", M.toRef(m, L.bottom));
-    press("#lsHard .chip", b => b.dataset.h === hb[1]); press("#lsMod button", b => !!hb[1] && b.dataset.mod === (hb[2] || ""));
+    press("#lsHard button", b => b.dataset.h === hb[1]); press("#lsMod button", b => !!hb[1] && b.dataset.mod === (hb[2] || ""));
     selValue("lsHardBot", L.hardBot && L.hardBot !== L.hardTop ? L.hardBot : "");
-    press("#lsGrain .chip", b => b.dataset.g === L.grain); selValue("lsGrainSel", L.grain); selValue("lsGrain2", L.grain2);
+    press("#lsGrain button", b => b.dataset.g === L.grain); selValue("lsGrainSel", L.grain); selValue("lsGrain2", L.grain2);
     setVal("lsSize", L.size); setVal("lsSizeMax", L.sizeMax); setVal("lsDensity", L.density);
-    press("#lsWet .chip", b => b.dataset.w === L.wet); setVal("lsNote", L.note); $("lsConcern").checked = !!L.concern;
+    press("#lsWet button", b => b.dataset.w === L.wet); setVal("lsNote", L.note); $("lsConcern").checked = !!L.concern;
   }
   function openLayer(i) { const L = m.layers[i]; if (!L) return; LS = L.id; editTag = null; select(i); fillLayer(); openSheet("layerSheet"); }
   function lsEdit(fn) { const L = curLayer(); if (!L) return; snap("layer:" + LS); fn(L); m.cur = L.id; sel = m.layers.indexOf(L); afterEdit(); fillLayer(); }
@@ -343,6 +344,7 @@
     $("tpDepth").value = isHeight() ? Math.max(0, v - 10) : v + 10; $("tpT").value = ""; $("tpT").focus();
   };
   $("tpT").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("tpAdd").click(); } });
+  $("addLayerBtn2").onclick = () => $("addLayerBtn").click(); $("addTempBtn2").onclick = () => $("addTempBtn").click();
 
   /* ---------- test result sheet ---------- */
   const TESTS = { ECT: "Extended column test", CT: "Compression test", PST: "Propagation saw test", RB: "Rutschblock", DT: "Deep tap test" };
@@ -359,18 +361,18 @@
   const tsFractured = () => TS.test === "ECT" ? TS.res === "P" || TS.res === "N" || TS.res === "PV" : TS.test === "RB" ? !!TS.res && TS.res !== "7" : TS.test === "PST" ? true : TS.res === "f";
   function renderTest() {
     const t = TS.test, res = RESULTS[t], cur = res.find(r => r[0] === TS.res), taps = (t === "ECT" && (TS.res === "P" || TS.res === "N")) || ((t === "CT" || t === "DT") && TS.res === "f");
-    $("tsType").innerHTML = Object.keys(TESTS).map(k => `<button type="button" class="chip" data-t="${k}" aria-pressed="${k === t}" title="${TESTS[k]}">${k}</button>`).join("");
-    $("tsResLbl").textContent = `${TESTS[t]} result:`;
-    $("tsRes").innerHTML = res.map(r => `<button type="button" class="chip" data-r="${r[0]}" aria-pressed="${r[0] === TS.res}">${r[1]}</button>`).join("");
+    $("tsType").innerHTML = Object.keys(TESTS).map(k => `<button type="button" class="pick" data-t="${k}" aria-pressed="${k === t}" title="${TESTS[k]}">${k}</button>`).join("");
+    $("tsResLbl").textContent = `${TESTS[t]} result`;
+    $("tsRes").innerHTML = res.map(r => `<button type="button" class="pick" data-r="${r[0]}" aria-pressed="${r[0] === TS.res}">${r[1]}</button>`).join("");
     $("tsExplain").textContent = cur ? cur[2] : t === "PST" ? "Cut length over column length, then where the fracture stopped." : "Pick the result.";
-    const numIn = (id, label, unit, val, w) => `<label><span>${label}</span><span class="with-unit"><input id="${id}" type="number" inputmode="numeric" step="1" min="0" value="${esc(val)}" style="width:${w || 84}px;font-size:19px;text-align:center">${unit ? `<span class="unit">${unit}</span>` : ""}</span></label>`;
+    const numIn = (id, label, unit, val) => `<label><span class="lbl">${label}${unit ? ` (${unit})` : ""}</span><input id="${id}" type="number" inputmode="numeric" step="1" min="0" value="${esc(val)}"></label>`;
     $("tsNums").innerHTML = taps ? numIn("tsTaps", "# of taps", "", TS.taps) : t === "PST" ? numIn("tsCut", "Cut length", "cm", TS.cut) + numIn("tsCol", "Column length", "cm", TS.col) : "";
     const showChar = (t === "CT" || t === "DT") && TS.res === "f", rb = t === "RB" && tsFractured();
-    $("tsCharSec").hidden = !showChar && !rb; $("tsCharSec").querySelector(".lbl").textContent = rb ? "Release Type:" : "Fracture Character:";
-    $("tsChar").innerHTML = rb ? [["WB", "Whole block"], ["MB", "Most of block"], ["EB", "Edge of block"]].map(c => `<button type="button" class="chip" data-c="${c[0]}" aria-pressed="${TS.rel === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("")
-      : CHARS.map(c => `<button type="button" class="chip" data-c="${c[0]}" aria-pressed="${TS.char === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("");
-    $("tsQ").hidden = rb; $("tsQ").innerHTML = ["Q1", "Q2", "Q3"].map(q => `<button type="button" class="chip" data-q="${q}" aria-pressed="${TS.q === q}">${q}</button>`).join("");
-    $("tsDepthLbl").textContent = isHeight() ? "Height From Ground:" : "Depth From Surface:";
+    $("tsCharSec").hidden = !showChar && !rb; $("tsCharSec").querySelector(".lbl").textContent = rb ? "Release type" : "Fracture character";
+    $("tsChar").innerHTML = rb ? [["WB", "Whole block"], ["MB", "Most of block"], ["EB", "Edge of block"]].map(c => `<button type="button" class="pick" data-c="${c[0]}" aria-pressed="${TS.rel === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("")
+      : CHARS.map(c => `<button type="button" class="pick" data-c="${c[0]}" aria-pressed="${TS.char === c[0]}">${c[0]} <small>${c[1]}</small></button>`).join("");
+    $("tsQ").hidden = rb; $("tsQ").innerHTML = ["Q1", "Q2", "Q3"].map(q => `<button type="button" class="pick" data-q="${q}" aria-pressed="${TS.q === q}">${q}</button>`).join("");
+    $("tsDepthLbl").textContent = isHeight() ? "Height from the ground" : "Depth from the surface";
   }
   function keepNums() { ["taps", "cut", "col"].forEach(k => { const el = $("ts" + k[0].toUpperCase() + k.slice(1)); if (el) TS[k] = el.value; }); }
   $("addTestBtn").onclick = () => {
@@ -381,7 +383,7 @@
     renderTest(); openSheet("testSheet");
   };
   $("testSheet").addEventListener("click", e => {
-    const b = e.target.closest(".chip"); if (!b || !TS) return; keepNums();
+    const b = e.target.closest(".pick"); if (!b || !TS) return; keepNums();
     if (b.dataset.t) { TS.test = b.dataset.t; TS.res = ""; TS.char = ""; TS.q = ""; TS.rel = ""; }
     else if (b.dataset.r) TS.res = b.dataset.r;
     else if (b.dataset.c) { if (TS.test === "RB") TS.rel = TS.rel === b.dataset.c ? "" : b.dataset.c; else TS.char = TS.char === b.dataset.c ? "" : b.dataset.c; }
@@ -407,8 +409,9 @@
     else if (tsFractured()) return need(isHeight() ? "Enter the height of the failure, in cm from the ground." : "Enter the depth of the failure, in cm from the surface.", "tsDepth");
     snap(); const out = M.apply(m, [a])[0];
     if (!out.ok) { undo.pop(); toast(out.say); return; }
-    closeSheet("testSheet"); afterEdit(); $("gTests").open = true; toast(out.say);
+    closeSheet("testSheet"); afterEdit(); toast(out.say);
   };
+  $("addTestBtn2").onclick = () => $("addTestBtn").click();
 
   /* ---------- info tab ---------- */
   const fields = $$("[data-k]");
@@ -443,7 +446,7 @@
     });
     const has = M.num(m.site.lat) != null && M.num(m.site.lng) != null, c = $("coords");
     c.textContent = has ? `${(+m.site.lat).toFixed(5)}, ${(+m.site.lng).toFixed(5)}` : "No position yet"; c.className = "coords" + (has ? "" : " none");
-    if (M.num(m.wx.tmax) != null || M.num(m.wx.tmin) != null || M.num(m.wx.hn24) != null || M.num(m.wx.hst) != null || m.wx.blow) $("moreWx").open = true;
+    if (M.num(m.wx.tmax) != null || M.num(m.wx.tmin) != null || M.num(m.wx.hst) != null || m.wx.blow) $("moreWx").open = true;
   }
   function gps() {
     if (!navigator.geolocation) { toast("This phone doesn't share its position with web apps."); return; }
@@ -463,7 +466,7 @@
   function satMeta(text) {
     const i = M.textInfo(text), c = $("satCount");
     c.textContent = text ? `${i.chars} characters · ${i.parts} text${i.parts > 1 ? "s" : ""}${i.gsm ? "" : " · special characters"}` : "";
-    c.className = "count" + (i.parts > 1 ? " over" : "");
+    c.className = "lbl" + (i.parts > 1 ? " over" : "");
     $("smsBtn").href = M.smsLink(cfg.to, text, IOS); $("smsBtn").setAttribute("aria-disabled", text ? "false" : "true");
     $("satEdited").hidden = satManual == null;
   }
@@ -502,37 +505,31 @@
     setTimeout(() => URL.revokeObjectURL(url), 5000); toast("Saved " + name);
   }
   const nothingYet = () => { if (hasData()) return false; toast("Nothing to export yet. Add a layer, a temperature or a test first."); return true; };
-  $("exportBtn").onclick = () => openSheet("exportSheet");
   $("pdfBtn").onclick = () => {
-    if (nothingYet()) return; closeSheet("exportSheet");
+    if (nothingYet()) return;
     try { saveFile(baseName() + ".pdf", new Blob([D.profilePdf(m, new Date(), { mirror: !!cfg.mirror })], { type: "application/pdf" })); } catch (e) { toast("The PDF couldn't be built: " + (e.message || e)); }
   };
-  $("xmlBtn").onclick = () => { if (nothingYet()) return; closeSheet("exportSheet"); saveFile(baseName() + ".caaml.xml", new Blob([M.caaml(m)], { type: "application/xml" })); };
+  $("xmlBtn").onclick = () => { if (nothingYet()) return; saveFile(baseName() + ".caaml.xml", new Blob([M.caaml(m)], { type: "application/xml" })); };
   $("pngBtn").onclick = () => {
-    if (nothingYet()) return; closeSheet("exportSheet");
+    if (nothingYet()) return;
     const page = D.screen(m, 900, 880, "light", { live: false, notes: true, sel: -1, mirror: !!cfg.mirror }), im = new Image();
     im.onload = () => { const c = document.createElement("canvas"); c.width = page.w * 2; c.height = page.h * 2; c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); c.toBlob(b => b ? saveFile(baseName() + ".png", b) : toast("The image couldn't be made."), "image/png"); };
     im.onerror = () => toast("The image couldn't be made."); im.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(D.svg(page));
   };
-  $("toSatBtn").onclick = () => { closeSheet("exportSheet"); setTab("sat"); persist(); };
 
   /* ---------- send to the Banff Snowpack app (the only link between the two apps) ---------- */
-  const outText = list => list.length ? `${list.length} waiting to send` : "Adds it to the Banff Snowpack app";
-  const outbox = S.start(list => { $("sendSmall").textContent = outText(list); });
-  $("sendSmall").textContent = outText(outbox.pending());
-  let sendSite = "other";
-  const renderSendSite = () => press("#sdSite .chip", b => b.dataset.s === sendSite);
-  $("sdSite").innerHTML = S.SITES.map(x => `<button type="button" class="chip" data-s="${x.id}" aria-pressed="false">${esc(x.label)}</button>`).join("");
-  $("sdSite").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (b) { sendSite = b.dataset.s; renderSendSite(); } });
+  const waiting = list => { $("sendTag").textContent = list.length ? list.length + " waiting to send" : ""; };
+  const outbox = S.start(waiting);
+  $("sendSite").innerHTML = S.SITES.map(x => `<option value="${x.id}">${esc(x.label)}</option>`).join("");
   $("sendBtn").onclick = () => {
-    if (nothingYet()) return; closeSheet("exportSheet");
-    sendSite = S.guessSite(m.site.location || m.name); renderSendSite(); openSheet("sendSheet");
+    if (nothingYet()) return;
+    $("sendSite").value = S.guessSite(m.site.location || m.name); $("sendRow").hidden = false; waiting(outbox.pending());
   };
-  $("sdGo").onclick = async () => {
-    closeSheet("sendSheet");
+  $("sendGo").onclick = async () => {
     try {
-      const r = await outbox.add({ pitId: m.id, filename: baseName() + ".caaml.xml", xml: M.caaml(m), site: sendSite,
+      const r = await outbox.add({ pitId: m.id, filename: baseName() + ".caaml.xml", xml: M.caaml(m), site: $("sendSite").value,
         location: m.site.location || m.name || "", date: m.site.date || nowLocal(), source: "voice page" });
+      $("sendRow").hidden = true;
       toast(r.left ? "No signal. It's saved on this phone and sends when you're back in range." : "Sent to Snowpack. It's added at the next daily update.");
     } catch (e) { toast(e.message || String(e)); }
   };
@@ -564,22 +561,18 @@
     store.list = store.list.filter(x => x.m.id !== store.cur); if (store.list.length) open(store.list[0].m.id); else newObs();
     closeSheet("menuSheet"); $("last").hidden = true; renderAll(); persist(); toast("Deleted.");
   };
-  function applyTheme() {
-    const light = cfg.theme === "light"; document.documentElement.dataset.theme = light ? "light" : "dark";
-    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = light ? "#ffffff" : "#1d1c22";
-  }
   $("mirSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; cfg.mirror = b.dataset.mir === "1"; renderAll(); persist(); });
-  $("themeSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; cfg.theme = b.dataset.theme; applyTheme(); renderAll(); persist(); });
+  document.documentElement.addEventListener("snowtheme", () => renderGraph()); // the Light / Dark switch in the header
   $("autoAdd").onchange = e => { cfg.auto = e.target.checked; persist(); };
   $("srNote").textContent = SR
     ? "The microphone button listens live in this browser, and may need a connection. With no signal, or in the app on your home screen, use the microphone on the keyboard instead."
     : "This app has no live listening here, so the microphone button opens the keyboard: tap the keyboard's microphone and talk. That works with no signal.";
   $("autoAdd").disabled = !SR;
   function renderLog() {
-    $("log").innerHTML = log.length ? log.slice(0, 40).map(e => `<div style="padding:10px 0;border-bottom:1px solid var(--line);display:grid;gap:4px"><div class="lbl">“${esc(e.text.length > 200 ? e.text.slice(0, 197) + "…" : e.text)}”</div>${linesHtml(e.res)}</div>`).join("")
-      : `<p class="note" style="font-size:14.5px;padding:10px 0">Nothing yet. What you say or type, and how it was read, is listed here.</p>`;
+    $("log").innerHTML = log.length ? log.slice(0, 40).map(e => `<div class="logrow"><div class="hint" style="margin:0">“${esc(e.text.length > 200 ? e.text.slice(0, 197) + "…" : e.text)}”</div>${linesHtml(e.res)}</div>`).join("")
+      : `<p class="hint">Nothing yet. What you say or type, and how it was read, is listed here.</p>`;
   }
-  $("logBtn").onclick = () => { closeSheet("menuSheet"); renderLog(); openSheet("logSheet"); };
+  $("logBtn").onclick = () => { renderLog(); openSheet("logSheet"); };
   const EXAMPLE = {
     height: "Location Bow Summit study plot, aspect north east, elevation 2080 metres, slope 28, snow depth 100.\nLayer 100 to 65 fist plus rounds point three. Layer 65 to 30 four finger plus rounds point five. Layer 30 to 0 fist facets with depth hoar 1.5 max 2 weak layer.\nTemperature 90 minus 3.6, 70 minus 3.2, 50 minus 2.7, 30 minus 1.8, 10 minus 0.9.\nCompression test 21 sudden planar at 30.\nSky broken, precip none, wind light south west, air temperature minus 7.8.",
     depth: "Location Bow Summit study plot, aspect north east, elevation 2080 metres, slope 28, snow depth 100.\nLayer 0 to 35 fist plus rounds point three. Layer 35 to 70 four finger plus rounds point five. Layer 70 to 100 fist facets with depth hoar 1.5 max 2 weak layer.\nTemperature 10 minus 3.6, 30 minus 3.2, 50 minus 2.7, 70 minus 1.8, 90 minus 0.9.\nCompression test 21 sudden planar down 70.\nSky broken, precip none, wind light south west, air temperature minus 7.8."
@@ -592,24 +585,30 @@
     $("hpTemps").innerHTML = H ? "temperature 150 minus 6, 140 minus 5.2<br>surface temperature minus 9" : "temperature 10 minus 3.6, 20 minus 3.5<br>surface temperature minus 9";
     const at = H ? "at 60" : "down 95";
     $("hpTests").innerHTML = `compression test 21 sudden planar ${at}<br>CT 12 Q2 ${at} · compression test no result<br>ECTP 22 ${at} · ECTN 15 ${at} · ECTX<br>PST 45 of 100 end ${at}<br>rutschblock 4 whole block ${at}<br>deep tap 18 sudden collapse ${at}`;
-    $("say").placeholder = tab === "info" ? "Say “location Bow Summit”" : tab === "sat" ? "Say “sky broken, wind calm”" : H ? "Say “layer 100 to 83 fist”" : "Say “layer 0 to 35 fist”";
+    $("say").placeholder = view === "sat" ? "Say “sky broken”" : H ? "Say “layer 100 to 83 fist”" : "Say “layer 0 to 35 fist”";
   }
-  $("helpBtn").onclick = () => { closeSheet("menuSheet"); openSheet("helpSheet"); };
+  $("helpBtn").onclick = () => openSheet("helpSheet");
   $("exampleBtn").onclick = () => { closeSheet("helpSheet"); setSay(EXAMPLE[isHeight() ? "height" : "depth"]); $("say").focus(); };
 
-  /* ---------- tabs ---------- */
-  function setTab(t) {
-    tab = t === "info" || t === "sat" ? t : "profile"; cfg.tab = tab;
-    $("tInfo").hidden = tab !== "info"; $("tProfile").hidden = tab !== "profile"; $("tSat").hidden = tab !== "sat";
-    $$("#tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-    if (m) { renderHelp(); if (tab === "profile") renderGraph(); else if (tab === "sat") renderSat(); else renderForm(); }
-    window.scrollTo(0, 0);
+  /* ---------- views: Voice and Sat text, switched by the tabs in the header ---------- */
+  const TAGLINE = { voice: "Spoken observations in, snow profile and PDF out.", sat: "Spoken weather and conditions in, a short text to send by satellite out." };
+  function setView(v) {
+    view = v === "sat" ? "sat" : "voice";
+    document.body.classList.toggle("view-sat", view === "sat");
+    $$("nav.tabs a[data-view]").forEach(a => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+    $("tagline").textContent = TAGLINE[view];
+    document.title = (view === "sat" ? "Satellite text" : "Voice profile") + " · Snowpack Translator";
+    if (m) { renderHelp(); if (view === "voice") renderGraph(); else renderSat(); }
   }
-  $("tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) { setTab(b.dataset.tab); persist(); } });
-  const hashTab = () => (location.hash === "#sat" ? "sat" : location.hash === "#info" ? "info" : location.hash === "#profile" ? "profile" : "");
-  window.addEventListener("hashchange", () => { if (hashTab()) setTab(hashTab()); }); // the home-screen shortcut to the satellite text
+  const hashView = () => (location.hash === "#sat" ? "sat" : "voice");
+  $$("nav.tabs a[data-view]").forEach(a => a.addEventListener("click", e => { // switch in place: no reload, nothing lost
+    e.preventDefault(); if (a.dataset.view === view) return;
+    try { history.replaceState(null, "", a.dataset.view === "sat" ? "#sat" : location.pathname + location.search); } catch (err) { /* file: pages */ }
+    setView(a.dataset.view); window.scrollTo(0, 0);
+  }));
+  window.addEventListener("hashchange", () => setView(hashView())); // the home-screen shortcut to the satellite text
   function renderAll() {
-    press("#refSeg button", b => b.dataset.ref === m.ref); press("#mirSeg button", b => (b.dataset.mir === "1") === !!cfg.mirror); press("#themeSeg button", b => b.dataset.theme === (cfg.theme === "light" ? "light" : "dark"));
+    press("#refSeg button", b => b.dataset.ref === m.ref); press("#mirSeg button", b => (b.dataset.mir === "1") === !!cfg.mirror);
     $("autoAdd").checked = cfg.auto !== false;
     renderForm(); renderTables(); renderGraph(); renderSel(); renderFlags(); renderSat(); renderObs(); renderHelp(); buttons(); micState();
   }
@@ -624,12 +623,14 @@
   window.addEventListener("appinstalled", () => { $("installBtn").hidden = true; toast("Installed. It works without signal."); });
   const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
   if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) $("installBtn").hidden = false;
+  const netTag = () => { $("offlineTag").hidden = navigator.onLine; };
+  window.addEventListener("online", netTag); window.addEventListener("offline", netTag); netTag();
   if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
   let rsT = null; window.addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(renderGraph, 120); });
 
   /* ---------- boot ---------- */
-  load(); applyTheme();
-  setTab(hashTab() || cfg.tab);
+  load();
+  setView(hashView());
   renderAll();
   if (imported) toast(`Brought ${imported} saved pit${imported > 1 ? "s" : ""} over from the old address.`);
   window.__voice = { add, model: () => m, flush }; // for tests
