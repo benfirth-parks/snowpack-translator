@@ -1,0 +1,17 @@
+# The Snowpack Translator site: plain files, no build. Netlify publishes main on every merge.
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# The service worker must always be fetched fresh so phones pick up a new version.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+# Repository files that are not part of the app.
+[[redirects]]
+  from = "/tests/*"
+  to = "/404"
+  status = 404
+  force = true
