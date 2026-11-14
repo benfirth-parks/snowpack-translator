@@ -11,7 +11,12 @@
     dark: { bg: "#121214", grid: "#34343a", gridBold: "#85858c", ink: "#f2f2f2", muted: "#a4a8ae", bar: "#6e6e70", barStroke: "#dcdcdc",
       concern: "#8f1a10", concernStroke: "#f0b9b2", temp: "#f0453a", test: "#f0a818", hs: "#f0a818", pit: "#4aa8ff", table: "#5c5c63", sel: "#ffffff", empty: "#2a2a2f" },
     light: { bg: "#ffffff", grid: "#cfcfcf", gridBold: "#5a5a5a", ink: "#111111", muted: "#555555", bar: "#ababab", barStroke: "#6a6a6a",
-      concern: "#ec8f85", concernStroke: "#b5281c", temp: "#d93025", test: "#e8a21a", hs: "#d98e00", pit: "#1e88e5", table: "#9a9a9a", sel: "#d9520b", empty: "#ececec" }
+      concern: "#ec8f85", concernStroke: "#b5281c", temp: "#d93025", test: "#e8a21a", hs: "#d98e00", pit: "#1e88e5", table: "#9a9a9a", sel: "#d9520b", empty: "#ececec" },
+    // the voice page's on-screen graph, in the colours of css/app.css (light and dark); "light" above stays the paper look of the PDF
+    day: { bg: "#fbfdfe", grid: "#d7e0e6", gridBold: "#7f93a1", ink: "#13212c", muted: "#566977", bar: "#bcd3e3", barStroke: "#557d9b",
+      concern: "#f2b1a6", concernStroke: "#b4232c", temp: "#c2410c", test: "#d9520b", hs: "#d9520b", pit: "#2f6488", table: "#a9b9c4", sel: "#d9520b", empty: "#eaf0f4" },
+    night: { bg: "#141f27", grid: "#22323d", gridBold: "#5b7180", ink: "#e2ebf1", muted: "#8fa3b1", bar: "#28465c", barStroke: "#6f9fc2",
+      concern: "#7a2328", concernStroke: "#ff6b73", temp: "#ff8a4c", test: "#ff7a33", hs: "#ff7a33", pit: "#7fb4d8", table: "#3c4f5c", sel: "#ff7a33", empty: "#1a2831" }
   };
 
   /* ---------- Helvetica metrics (for centring and right-aligning text in the PDF) ---------- */
