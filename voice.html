@@ -343,10 +343,20 @@ dialog.sheet::backdrop{background:rgba(0,0,0,.55)}
   <div class="scroll"><div class="big-actions">
     <button type="button" class="primary" id="pdfBtn">PDF snow profile<small>Two pages, prints on Letter</small></button>
     <button type="button" id="pngBtn">Image of the profile<small>PNG, to text or email</small></button>
+    <button type="button" id="sendBtn">Send to Snowpack<small id="sendSmall">Adds it to the Banff Snowpack app</small></button>
     <button type="button" id="xmlBtn">CAAML file<small>For SnowPilot, niViz, the forecast agent</small></button>
     <button type="button" id="toSatBtn">Satellite text<small>Weather and conditions, about 160 characters</small></button>
-  </div><p class="note">Files are made on this phone. Nothing is uploaded.</p></div>
+  </div><p class="note">Files are made on this phone. Only Send to Snowpack uploads anything.</p></div>
   <footer hidden></footer>
+</div></dialog>
+
+<dialog class="sheet" id="sendSheet" aria-labelledby="sd-h"><div class="body">
+  <header><h2 id="sd-h">Send to Snowpack</h2><button class="quiet" type="button" data-close>Close</button></header>
+  <div class="scroll">
+    <div class="sec"><span class="lbl">Study plot:</span><div class="chips" id="sdSite"></div></div>
+    <div class="sec"><div class="big-actions"><button type="button" class="primary" id="sdGo">Send this profile<small>CAAML</small></button></div>
+      <p class="note" id="sdNote">The profile goes to the Banff Snowpack app's observation upload and is added at its next daily update. With no signal it waits on this phone and sends when you're back in range.</p></div>
+  </div><footer hidden></footer>
 </div></dialog>
 
 <dialog class="sheet" id="menuSheet" aria-labelledby="mn-h"><div class="body">
@@ -389,6 +399,7 @@ dialog.sheet::backdrop{background:rgba(0,0,0,.55)}
 <script src="js/parse.js"></script>
 <script src="js/model.js"></script>
 <script src="js/draw.js"></script>
+<script src="js/send.js"></script>
 <script src="js/voice.js"></script>
 </body>
 </html>

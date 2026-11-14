@@ -4,7 +4,7 @@
    storage and nothing is sent anywhere. */
 (function () {
   "use strict";
-  const P = window.SnowSpeak, M = window.SnowModel, D = window.SnowDraw;
+  const P = window.SnowSpeak, M = window.SnowModel, D = window.SnowDraw, S = window.SnowSend;
   const $ = id => document.getElementById(id);
   const $$ = (q, root) => Array.from((root || document).querySelectorAll(q));
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -48,10 +48,27 @@
   function load() {
     try { cfg = Object.assign(cfg, JSON.parse(localStorage.getItem(SET) || "{}")); } catch (e) { /* first run */ }
     try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s && Array.isArray(s.list)) store = s; } catch (e) { /* first run */ }
+    imported = importOld();
     store.list = store.list.filter(e => e && e.m && e.m.layers);
     if (store.cur && entry()) open(store.cur); else if (store.list.length) open(store.list[0].m.id); else newObs();
   }
   const isEmpty = () => !hasData() && !log.length && !m.site.location && !m.name;
+  // Pits saved at the old address (banff-snowpack.netlify.app/pit/) arrive in the link as #import=<base64url JSON>;
+  // the ones this phone doesn't have yet are added, then the link is cleaned so a reload doesn't add them again.
+  let imported = 0;
+  function importOld() {
+    const h = location.hash.match(/^#import=([A-Za-z0-9_-]+)$/); if (!h) return 0;
+    let added = 0;
+    try {
+      const b = h[1].replace(/-/g, "+").replace(/_/g, "/"), json = decodeURIComponent(escape(atob(b + "===".slice((b.length + 3) % 4))));
+      const old = JSON.parse(json).voice, have = new Set(store.list.map(e => e && e.m && e.m.id));
+      (old && Array.isArray(old.list) ? old.list : []).forEach(e => { if (e && e.m && e.m.layers && !have.has(e.m.id)) { store.list.push(e); added++; } });
+      if (added && !store.cur && old.cur) store.cur = old.cur;
+    } catch (e) { /* a damaged link: nothing added */ }
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* ignore */ }
+    if (added) try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* storage full: kept for this visit */ }
+    return added;
+  }
 
   /* ---------- undo and redo ---------- */
   const state = () => JSON.stringify({ m, log });
@@ -499,6 +516,27 @@
   };
   $("toSatBtn").onclick = () => { closeSheet("exportSheet"); setTab("sat"); persist(); };
 
+  /* ---------- send to the Banff Snowpack app (the only link between the two apps) ---------- */
+  const outText = list => list.length ? `${list.length} waiting to send` : "Adds it to the Banff Snowpack app";
+  const outbox = S.start(list => { $("sendSmall").textContent = outText(list); });
+  $("sendSmall").textContent = outText(outbox.pending());
+  let sendSite = "other";
+  const renderSendSite = () => press("#sdSite .chip", b => b.dataset.s === sendSite);
+  $("sdSite").innerHTML = S.SITES.map(x => `<button type="button" class="chip" data-s="${x.id}" aria-pressed="false">${esc(x.label)}</button>`).join("");
+  $("sdSite").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (b) { sendSite = b.dataset.s; renderSendSite(); } });
+  $("sendBtn").onclick = () => {
+    if (nothingYet()) return; closeSheet("exportSheet");
+    sendSite = S.guessSite(m.site.location || m.name); renderSendSite(); openSheet("sendSheet");
+  };
+  $("sdGo").onclick = async () => {
+    closeSheet("sendSheet");
+    try {
+      const r = await outbox.add({ pitId: m.id, filename: baseName() + ".caaml.xml", xml: M.caaml(m), site: sendSite,
+        location: m.site.location || m.name || "", date: m.site.date || nowLocal(), source: "voice page" });
+      toast(r.left ? "No signal. It's saved on this phone and sends when you're back in range." : "Sent to Snowpack. It's added at the next daily update.");
+    } catch (e) { toast(e.message || String(e)); }
+  };
+
   /* ---------- observations and settings ---------- */
   const obsName = o => o.name || o.site.location || "Untitled";
   function renderObs() {
@@ -593,5 +631,6 @@
   load(); applyTheme();
   setTab(hashTab() || cfg.tab);
   renderAll();
+  if (imported) toast(`Brought ${imported} saved pit${imported > 1 ? "s" : ""} over from the old address.`);
   window.__voice = { add, model: () => m, flush }; // for tests
 })();
