@@ -174,7 +174,7 @@ button.danger{border-color:var(--bad);color:var(--bad)}
       <section class="panel only-voice o3" aria-labelledby="ly-h">
         <div class="panel-head"><div class="row"><h2 id="ly-h">Layers</h2><span class="lbl" id="sumLayers"></span></div><button id="addLayerBtn2" type="button">Add layer at bottom</button></div>
         <div class="tbl-wrap"><table id="layerTbl"></table></div>
-        <p class="note">Tap a row to change a layer. Hardness, grain form and size are read from what you say; nothing is guessed.</p>
+        <p class="note">Tap a row to change a layer. Hardness, grain form and size are read from what you say. A word read as something else is marked “heard … as …”.</p>
       </section>
 
       <section class="panel only-voice o4" aria-labelledby="tp-ph">
@@ -365,20 +365,20 @@ button.danger{border-color:var(--bad);color:var(--bad)}
     <dt>Start</dt><dd id="hpStart"></dd>
     <dt>Layers: top, bottom, hardness, grain, size</dt><dd id="hpLayers"></dd>
     <dt>Hardness</dt><dd>fist · four finger · one finger · pencil · knife · ice<br>add “plus” or “minus”; “pencil to knife” for a layer that changes</dd>
-    <dt>Grain forms</dt><dd>new snow · graupel · decomposing · rounds · faceted rounds · facets · rounding facets · depth hoar · surface hoar · melt forms · crust · ice lens</dd>
+    <dt>Grain forms</dt><dd>new snow · graupel · decomposing · rounds · faceted rounds · facets · rounding facets · depth hoar · surface hoar · melt forms · crust · ice lens<br>or the OGRS code, said or spelled: FC · D H · FCxr · MFcr</dd>
     <dt>Temperatures</dt><dd id="hpTemps"></dd>
     <dt>Stability tests</dt><dd id="hpTests"></dd>
     <dt>Site</dt><dd>profile name … · location Bow Summit · observer Ben Firth · aspect north east · elevation 2080 metres · slope 28</dd>
-    <dt>Weather and surface</dt><dd>sky broken · precip none · snowing S2 · wind light south west · air temperature minus 7 · max temp minus 5 · min temp minus 12<br>HN24 5 · storm snow 20 · foot pen 30 · ski pen 15 · blowing snow moderate west</dd>
+    <dt>Weather and surface</dt><dd>sky broken · precip nil · snowing S2 · light rain · wind light south west · air temperature minus 7 · max temp minus 5 · min temp minus 12<br>HN24 5 · storm snow 20 · foot pen 30 · ski pen 15 · blowing snow moderate west<br>OGRS codes work too: sky BKN · precip S1 · wind M SW</dd>
     <dt>Free text (say these last)</dt><dd>avalanches size 2 natural on north aspects<br>note whumpfing on the approach</dd>
     <dt>Fix a mistake</dt><dd>scratch that · change layer 2 pencil · delete layer 3</dd>
-  </dl><p class="note">A fixed word list does the reading, on this phone. Nothing is guessed: words it does not know come back marked “not understood”.</p>
+  </dl><p class="note">A fixed list of OGRS terms does the reading, on this phone, with no AI. A word that sounds like a term is read as that term and marked “heard … as …”, so you can check it. Words it does not know come back marked “not understood”.</p>
   <p><button type="button" id="exampleBtn">Put a full example in the box</button></p></div><footer hidden></footer>
 </div></dialog>
 
 <dialog class="dlg" id="logSheet" aria-labelledby="lg-h"><div class="body">
   <header><h2 id="lg-h">Everything heard so far</h2><button class="ghost" type="button" data-close>Close</button></header>
-  <div class="scroll" id="log"></div><footer hidden></footer>
+  <div class="scroll" id="log"></div><footer><button type="button" id="logCopy">Copy all</button></footer>
 </div></dialog>
 
 <div class="toast" id="toast" hidden role="status"></div>

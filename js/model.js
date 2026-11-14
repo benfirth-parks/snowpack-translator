@@ -7,19 +7,27 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
+  // IACS 2009 grain classes and subclasses, as OGRS lists them
   const GRAINS = {
-    PP: "Precipitation particles", PPgp: "Graupel", PPsd: "Stellar dendrites", MM: "Machine made", DF: "Decomposing fragments",
+    PP: "Precipitation particles", PPco: "Columns", PPnd: "Needles", PPpl: "Plates", PPsd: "Stellar dendrites", PPir: "Irregular crystals",
+    PPgp: "Graupel", PPhl: "Hail", PPip: "Ice pellets", PPrm: "Rime",
+    MM: "Machine made", MMrp: "Round polycrystalline particles", MMci: "Crushed ice",
+    DF: "Decomposing fragments", DFdc: "Partly decomposed", DFbk: "Wind-broken particles",
     RG: "Rounded grains", RGsr: "Small rounds", RGlr: "Large rounds", RGwp: "Wind packed", RGxf: "Faceted rounds",
-    FC: "Faceted crystals", FCsf: "Near-surface facets", FCxr: "Rounding facets", DH: "Depth hoar", SH: "Surface hoar",
-    MF: "Melt forms", MFcr: "Melt-freeze crust", IF: "Ice formation", IFrc: "Rain crust", IFsc: "Sun crust"
+    FC: "Faceted crystals", FCso: "Solid facets", FCsf: "Near-surface facets", FCxr: "Rounding facets",
+    DH: "Depth hoar", DHcp: "Hollow cups", DHpr: "Hollow prisms", DHch: "Chains of depth hoar", DHla: "Large striated crystals", DHxr: "Rounding depth hoar",
+    SH: "Surface hoar", SHsu: "Surface hoar crystals", SHcv: "Cavity hoar", SHxr: "Rounding surface hoar",
+    MF: "Melt forms", MFcl: "Clustered rounds", MFpc: "Rounded polycrystals", MFsl: "Slush", MFcr: "Melt-freeze crust",
+    IF: "Ice formation", IFil: "Ice layer", IFic: "Ice column", IFbi: "Basal ice", IFrc: "Rain crust", IFsc: "Sun crust"
   };
   const HARD = ["F-", "F", "F+", "4F-", "4F", "4F+", "1F-", "1F", "1F+", "P-", "P", "P+", "K-", "K", "K+", "I"];
   const HBASE = { F: 1, "4F": 2, "1F": 3, P: 4, K: 5, I: 6 };
   const WET = { D: "Dry", M: "Moist", W: "Wet", V: "Very wet", S: "Soaked" };
   const SKY = { CLR: "Clear", FEW: "Few", SCT: "Scattered", BKN: "Broken", OVC: "Overcast", X: "Obscured" };
   const WIND = { C: "Calm", L: "Light", M: "Moderate", S: "Strong", X: "Extreme", VAR: "Variable" };
-  const PRECIP = { NIL: "No precipitation", "S-1": "Snow, very light", S1: "Snow, light (1 cm/h)", S2: "Snow, moderate (2 cm/h)", S5: "Snow, heavy (5 cm/h)", S10: "Snow, very heavy (10 cm/h)", RV: "Rain, very light", RL: "Rain, light", RM: "Rain, moderate", RH: "Rain, heavy" };
-  const BLOW = { NIL: "None", Prev: "Previous", L: "Light", M: "Moderate", I: "Intense" };
+  const PRECIP = { NIL: "No precipitation", "S-1": "Snow, very light", S1: "Snow, light (1 cm/h)", S2: "Snow, moderate (2 cm/h)", S3: "Snow, 3 cm/h", S4: "Snow, 4 cm/h", S5: "Snow, heavy (5 cm/h)", S10: "Snow, very heavy (10 cm/h)",
+    RV: "Rain, very light", RL: "Rain, light", RM: "Rain, moderate", RH: "Rain, heavy", RS: "Mixed rain and snow", G: "Graupel or hail", ZR: "Freezing rain" };
+  const BLOW = { NIL: "None", Prev: "Previous", L: "Light", M: "Moderate", I: "Intense", U: "Unknown" };
 
   function hIndex(h) {
     const m = /^(4F|1F|F|P|K|I)([+-]?)$/.exec(h || ""); if (!m) return 0;
@@ -74,11 +82,22 @@
     if (ref === "height" && num(m.surf.hs) == null && pitBottom(m) > 0) m.surf.hs = pitBottom(m);
     m.ref = ref;
   }
-  function spokenDepth(m, v) { // a spoken depth or height -> stored depth
-    if (m.ref !== "height") return v;
+  // A spoken depth or height -> stored depth. "from" is "surface" or "ground" when the observer said which ("down 30",
+  // "up 40"); without it the number is read the way the page is set. Null when a height is said in a depth-mode pit
+  // whose snow depth is not known yet.
+  function spokenDepth(m, v, from) {
+    const height = from ? from === "ground" : m.ref === "height";
+    if (!height) return v;
     const hs = num(m.surf.hs);
+    if (m.ref !== "height") return hs == null ? null : hs - v;
     if (hs == null || v > hs) setHS(m, v);
     return num(m.surf.hs) - v;
+  }
+  // How a spoken position is read back: plainly when it was said the way the page is set, both ways when it was not.
+  function posSay(m, v, from, d) {
+    if (!from || (from === "ground") === (m.ref === "height")) return `at ${fmt(v)} cm`;
+    if (from === "surface") return `at ${fmt(v)} cm below the surface` + (num(m.surf.hs) != null ? ` (height ${fmt(toRef(m, d))} cm)` : "");
+    return `at ${fmt(v)} cm above the ground (depth ${fmt(d)} cm)`;
   }
 
   /* ---------- labels ---------- */
@@ -155,9 +174,14 @@
     if (a.concern) L.concern = true;
   }
 
+  // what the parser read as something else, said back so nothing is changed silently
+  const heardSay = a => (a.heard && a.heard.length ? " (heard " + a.heard.map(h => `“${h[0]}” as ${h[1]}`).join(", ") + ")" : "");
+  const NEED_HS = "Say the snow depth first, then say this again.";
+
   function applyOne(m, a) {
     const bad = (say, hint) => ({ ok: false, say, hint });
     const extra = a.unknown && a.unknown.length ? ` Not understood: “${a.unknown.join(" ")}”.` : "";
+    const heard = heardSay(a), unsure = !!a.unsure;
     if (a.type === "unknown") return bad(`Not understood: “${a.text}”`, a.hint);
     if (a.type === "undo") return { ok: true, undo: true, say: "Undo" };
     if (a.type === "set") {
@@ -170,26 +194,47 @@
       if (a.key === "wx.windSpd" && a.value === "C") m.wx.windDir = "";
       if (a.quiet) return { ok: true, quiet: true };
       const f = FIELD[a.key] || [a.key], shown = f[2] && f[2][a.value] ? `${a.value} (${f[2][a.value].toLowerCase()})` : a.value + (a.key === "site.elev" ? " " + m.site.elevUnit : (f[1] || ""));
-      return { ok: true, say: `${f[0]}: ${shown}` };
+      return { ok: true, warn: unsure, say: `${f[0]}: ${shown}` + heard };
     }
     if (a.type === "text") {
       m[a.key] = m[a.key] ? m[a.key].replace(/[.;\s]+$/, "") + "; " + a.text : a.text;
       return { ok: true, say: (a.key === "avs" ? "Avalanches: " : "Note: ") + a.text };
     }
     if (a.type === "temp") {
-      const d = +spokenDepth(m, a.depth).toFixed(1);
+      const sd = spokenDepth(m, a.depth, a.from);
+      if (sd == null) return bad(`A temperature ${fmt(a.depth)} cm above the ground needs the snow depth.`, NEED_HS);
+      const d = +sd.toFixed(1);
       if (d < 0) return bad(`Temperature at ${a.depth} cm is above the snow surface.`);
       m.temps = m.temps.filter(t => Math.abs(t.depth - d) > 0.01); m.temps.push({ id: m.uid++, depth: d, t: a.t }); m.temps.sort((x, y) => x.depth - y.depth);
-      return { ok: true, say: `Temperature ${fmt(a.t)} °C at ${fmt(a.depth)} cm` };
+      const surface = a.from === "surface" && a.depth === 0;
+      return { ok: true, warn: unsure, say: (surface ? `Surface temperature ${fmt(a.t)} °C` : `Temperature ${fmt(a.t)} °C ${posSay(m, a.depth, a.from, d)}`) + heard };
     }
     if (a.type === "test") {
-      const t = { id: m.uid++, type: a.test, score: a.score != null ? a.score : null, depth: a.depth != null ? +spokenDepth(m, a.depth).toFixed(1) : null, note: a.note || "" };
+      let d = null;
+      if (a.depth != null) {
+        const sd = spokenDepth(m, a.depth, a.from);
+        if (sd == null) return bad(`${a.test} ${fmt(a.depth)} cm above the ground needs the snow depth.`, NEED_HS);
+        d = +sd.toFixed(1);
+      }
+      const t = { id: m.uid++, type: a.test, score: a.score != null ? a.score : null, depth: d, note: a.note || "" };
       ["char", "q", "prop", "none", "band", "cut", "col", "res", "rel"].forEach(k => { if (a[k] != null) t[k] = a[k]; });
-      if (a.test === "ECT" && !t.prop && t.score != null) { m.tests.push(t); return { ok: true, warn: true, say: `${testLabel(t)}: say “propagates” or “no propagation”.` + extra }; }
-      if (a.test !== "ECT" && a.test !== "PST" && t.score == null && !t.none && !t.band) return bad(`Test not understood: “${a.test} ${(a.unknown || []).join(" ")}”`, "Say the score, for example “compression test 21 sudden planar down 88”.");
+      if (a.test === "ECT" && !t.prop && t.score != null) { m.tests.push(t); return { ok: true, warn: true, say: `${testLabel(t)}: say “propagates” or “no propagation”.` + extra + heard }; }
+      if (a.test !== "ECT" && a.test !== "PST" && t.score == null && !t.none && !t.band) return bad(`Test not understood: “${a.test} ${(a.unknown || []).join(" ")}”`, a.test === "ST" ? "Say the result, for example “shovel shear test easy down 30”." : "Say the score, for example “compression test 21 sudden planar down 88”.");
+      if (a.test === "ECT" && !t.prop) return bad(`Test not understood: “ECT ${(a.unknown || []).join(" ")}”`, "Say the result, for example “ECTP 22 down 60” or “ECTX”.");
       m.tests.push(t);
-      const on = layerAt(m, t.depth);
-      return { ok: true, warn: t.depth == null || !!extra, say: testLabel(t) + (t.depth != null ? ` at ${fmt(a.depth)} cm` + (on && on.grain ? ` on ${(GRAINS[on.grain] || on.grain).toLowerCase()}` : "") : ": say “down” and the depth to place it on the graph.") + extra };
+      const on = layerAt(m, t.depth), noDepth = t.depth == null && !t.none && t.prop !== "X";
+      return { ok: true, warn: noDepth || !!extra || unsure, say: testLabel(t) + (t.depth != null ? " " + posSay(m, a.depth, a.from, d) + (on && on.grain ? ` on ${(GRAINS[on.grain] || on.grain).toLowerCase()}` : "") : noDepth ? ": now say where it failed, for example “down 30”." : "") + extra + heard };
+    }
+    if (a.type === "place") { // "down 30" on its own: where the test just said failed
+      const T = m.tests[m.tests.length - 1];
+      if (T && T.depth == null && !T.none && T.prop !== "X") {
+        const sd = spokenDepth(m, a.depth, a.from);
+        if (sd == null) return bad(`${testLabel(T)} ${fmt(a.depth)} cm above the ground needs the snow depth.`, NEED_HS);
+        T.depth = +sd.toFixed(1); const on = layerAt(m, T.depth);
+        return { ok: true, warn: unsure, say: `${testLabel(T)} ${posSay(m, a.depth, a.from, T.depth)}` + (on && on.grain ? ` on ${(GRAINS[on.grain] || on.grain).toLowerCase()}` : "") + heard };
+      }
+      if (a.hs) return applyOne(m, { type: "set", key: "surf.hs", value: a.depth, heard: a.heard, unsure: a.unsure });
+      return bad(`Not understood: “${a.text}”`, "Say the test first, then where it failed: “compression test 21 sudden planar down 30”.");
     }
     if (a.type === "dellayer") {
       const i = a.index != null ? a.index - 1 : m.layers.findIndex(l => l.id === m.cur);
@@ -204,21 +249,27 @@
         if (!L) return bad(a.mode === "index" ? `There is no layer ${a.index}.` : "No layer yet. Start with its depths, for example “layer 0 to 35 fist rounds”.");
         if (empty) return bad("Nothing to change on that layer." + extra);
         setAttrs(L, a.attrs); m.cur = L.id;
-        return { ok: true, warn: !!extra, say: layerSay(m, L) + extra + (a.heardFirst ? " (heard “first” as fist)" : "") };
+        return { ok: true, warn: !!extra || unsure, say: layerSay(m, L) + extra + heard };
       }
       let top, bottom;
       const prev = () => { const c = m.layers.find(l => l.id === m.cur) || m.layers[m.layers.length - 1]; return c ? c.bottom : 0; };
+      // boundaries are read the way the page is set, unless the observer said "depth" (below the surface) outright
+      const height = a.from ? a.from === "ground" : m.ref === "height", hs = () => num(m.surf.hs);
+      const edge = x => (x === "surface" ? 0 : x === "ground" ? hs() : !height ? x : hs() == null ? null : hs() - x);
       if (a.mode === "range") {
-        if (m.ref === "height") { spokenDepth(m, Math.max(a.a, a.b)); top = num(m.surf.hs) - a.a; bottom = num(m.surf.hs) - a.b; }
-        else { top = a.a; bottom = a.b; }
+        const nums = [a.a, a.b].filter(x => typeof x === "number");
+        if (height && m.ref === "height" && nums.length) spokenDepth(m, Math.max.apply(null, nums)); // the first height said can set the snow depth
+        top = edge(a.a); bottom = edge(a.b);
+        if (top == null || bottom == null) return bad("That layer needs the snow depth.", NEED_HS);
       } else if (a.mode === "thick") { top = prev(); bottom = top + a.b; }
       else { // "to": from the last boundary to the spoken one
-        if (m.ref === "height" && num(m.surf.hs) == null) return bad("Say the snow depth first, or give both heights: “layer 150 to 141”.");
-        top = prev(); bottom = m.ref === "height" ? num(m.surf.hs) - a.b : a.b;
+        top = prev(); bottom = edge(a.b);
+        if (bottom == null) return bad("Say the snow depth first, or give both heights: “layer 150 to 141”.");
       }
       const r = putLayer(m, top, bottom, a.attrs);
       if (r.err) return bad(r.err);
-      return { ok: true, warn: !!extra, say: layerSay(m, r.layer) + (r.changed ? " (adjusted the layers it overlaps)" : "") + extra + (a.heardFirst ? " (heard “first” as fist)" : "") };
+      const said = a.from && a.mode !== "thick" && (a.from === "ground") !== (m.ref === "height") ? ` (said as ${a.from === "surface" ? "depths below the surface" : "heights above the ground"})` : "";
+      return { ok: true, warn: !!extra || unsure, say: layerSay(m, r.layer) + said + (r.changed ? " (adjusted the layers it overlaps)" : "") + extra + heard };
     }
     return bad("Not understood.");
   }
@@ -333,15 +384,16 @@
       }
       if (t.type === "PST") return `        <caaml:PropSawTest>\n${cm}${lay}          <caaml:Results>\n            <caaml:fracturePropagation>${X(t.res || "End")}</caaml:fracturePropagation>\n            <caaml:cutLength uom="cm">${t.cut != null ? t.cut : ""}</caaml:cutLength>\n            <caaml:columnLength uom="cm">${t.col != null ? t.col : ""}</caaml:columnLength>\n          </caaml:Results>\n        </caaml:PropSawTest>\n`;
       if (t.type === "RB") return `        <caaml:RBlockTest>\n${cm}${lay}          <caaml:Results>\n${t.rel ? `            <caaml:releaseType>${X(t.rel)}</caaml:releaseType>\n` : ""}            <caaml:testScore>RB${X(t.score)}</caaml:testScore>\n          </caaml:Results>\n        </caaml:RBlockTest>\n`;
-      return ""; // deep tap tests have no CAAML 6 element; they stay in the comment below
+      return ""; // deep tap and shovel shear tests have no CAAML 6 element; they stay in the comment below
     }).join("");
-    const extra = m.tests.filter(t => t.type === "DT").map(t => `${testLabel(t)}${num(t.depth) != null ? " at " + n1(t.depth) + " cm depth" : ""}`).join("; ");
+    const others = type => m.tests.filter(t => t.type === type).map(t => `${testLabel(t)}${num(t.depth) != null ? " at " + n1(t.depth) + " cm depth" : ""}`).join("; ");
+    const extra = others("DT"), shear = others("ST");
     const loc = [`    <caaml:name>${X(st.location || m.name || "Unnamed pit")}</caaml:name>`, `    <caaml:obsPointSubType>Snow pit</caaml:obsPointSubType>`];
     if (num(st.elev) != null) loc.push(`    <caaml:validElevation>\n      <caaml:ElevationPosition uom="m">\n        <caaml:position>${Math.round(st.elevUnit === "ft" ? st.elev * 0.3048 : +st.elev)}</caaml:position>\n      </caaml:ElevationPosition>\n    </caaml:validElevation>`);
     if (st.aspect) loc.push(`    <caaml:validAspect>\n      <caaml:AspectPosition>\n        <caaml:position>${X(st.aspect)}</caaml:position>\n      </caaml:AspectPosition>\n    </caaml:validAspect>`);
     if (num(st.slope) != null) loc.push(`    <caaml:validSlopeAngle>\n      <caaml:SlopeAnglePosition uom="deg">\n        <caaml:position>${+st.slope}</caaml:position>\n      </caaml:SlopeAnglePosition>\n    </caaml:validSlopeAngle>`);
     if (num(st.lat) != null && num(st.lng) != null) loc.push(`    <caaml:pointLocation>\n      <gml:Point gml:id="${id}-pt" srsName="urn:ogc:def:crs:OGC:1.3:CRS84" srsDimension="2">\n        <gml:pos>${+st.lng} ${+st.lat}</gml:pos>\n      </gml:Point>\n    </caaml:pointLocation>`);
-    const comment = [m.notes, m.avs ? "Avalanche observations: " + m.avs + "." : "", extra ? "Deep tap tests: " + extra + "." : "", "Recorded by the observer with Snowpack Translator (spoken or typed entry)."].filter(Boolean).join(" ");
+    const comment = [m.notes, m.avs ? "Avalanche observations: " + m.avs + "." : "", extra ? "Deep tap tests: " + extra + "." : "", shear ? "Shovel shear tests: " + shear + "." : "", "Recorded by the observer with Snowpack Translator (spoken or typed entry)."].filter(Boolean).join(" ");
     return `<?xml version="1.0" encoding="UTF-8"?>
 <caaml:SnowProfile gml:id="${id}" xmlns:caaml="http://caaml.org/Schemas/SnowProfileIACS/v6.0.3" xmlns:gml="http://www.opengis.net/gml" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <caaml:metaData>
@@ -379,7 +431,7 @@ ${temps ? `      <caaml:tempProfile uomDepth="cm" uomTemp="degC">\n${temps}     
 `;
   }
 
-  return { caaml, GRAINS, HARD, WET, SKY, WIND, PRECIP, BLOW, hIndex, num, fmt, fmtSize, blank, pitBottom, hsOf, toRef, fromRef, setHS, hsConflict, setRef, spokenDepth,
+  return { caaml, GRAINS, HARD, WET, SKY, WIND, PRECIP, BLOW, hIndex, num, fmt, fmtSize, blank, pitBottom, hsOf, toRef, fromRef, setHS, hsConflict, setRef, spokenDepth, posSay,
     hardLabel, sizeLabel, grainLabel, layerSay, testLabel, layerAt, surfaceGrain, putLayer, setAttrs, apply, flags, layerHard, layerSize,
     shortDate, satText, textInfo, smsLink, plain };
 });

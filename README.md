@@ -5,7 +5,7 @@ Turn a photo of a snow pit wall, or your spoken observations, into a snow profil
 Live: https://snowpack-translator.netlify.app (Netlify publishes `main` on every merge).
 
 - `index.html`: photo page. Ruler scale, layer boundaries from pixel brightness and texture (no AI), hand hardness entry, CAAML 6.0.3 export.
-- `voice.html` + `js/`: Voice and Sat text, two views of one page. A fixed word list turns dictated sentences into a profile (`js/parse.js`, `js/model.js`), drawn to SVG and PDF (`js/draw.js`); Sat text composes a message for Messages.
+- `voice.html` + `js/`: Voice and Sat text, two views of one page. A fixed list of OGRS terms, codes and known mishearings, plus a closest-match rule for words that sound like a term, turns dictated sentences into a profile (`js/parse.js`, `js/model.js`; no AI, and every word read as something else is shown as “heard … as …”), drawn to SVG and PDF (`js/draw.js`); Sat text composes a message for Messages.
 - `css/app.css`: the one look all three pages share (colours, type, panels, tabs, buttons). A page keeps only what is its own in a small inline style.
 - `js/theme.js`: the Light / Dark switch. It follows the phone until a choice is made, then keeps that choice on the device for every page.
 - `sw.js`: offline cache. Bump `VERSION` whenever a cached file changes.
