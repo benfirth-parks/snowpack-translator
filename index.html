@@ -897,5 +897,8 @@ if("serviceWorker" in navigator&&location.protocol!=="file:"){navigator.serviceW
   }
 })();
 </script>
+<!-- App feedback box: suggestions go to the site's Netlify form "app-feedback" and wait for Ben's approval -->
+<form name="app-feedback" data-netlify="true" netlify-honeypot="bot-field" hidden><input name="app"><input name="subject"><textarea name="suggestion"></textarea><input name="name"><input name="page"><input name="bot-field"></form>
+<script src="app-feedback.js" data-app="Snowpack Translator" defer></script>
 </body>
 </html>
